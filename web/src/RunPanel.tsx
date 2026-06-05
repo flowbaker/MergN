@@ -285,11 +285,6 @@ export function RunPanel({
         <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
           <div className="mb-2 flex items-center gap-2">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>
-                {useForm && inputMode === "form"
-                  ? "trigger input"
-                  : "trigger input (JSON)"}
-              </span>
               {syncing && (
                 <span className="flex items-center gap-1 text-amber-300">
                   <RefreshCw className="h-3 w-3 animate-spin" />

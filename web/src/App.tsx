@@ -543,28 +543,32 @@ export function App() {
               />
             )}
           </div>
-          <div
-            onMouseDown={startResize}
-            className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-t border-border/40"
-          >
-            <div className="h-0.5 w-8 rounded-full bg-border transition-colors group-hover:bg-foreground/40" />
-          </div>
-          <div style={{ height: bottomHeight }} className="shrink-0">
-            <RunPanel
-              funcs={funcs}
-              wires={wires}
-              config={configValues}
-              workflowId={workflowId}
-              workflowName={name}
-              inputForm={inputForm}
-              onInputForm={setInputForm}
-              triggerFields={triggerFields}
-              syncing={formSyncing}
-              onStatus={setRunStatus}
-              onData={setRunData}
-              onRepair={onRepair}
-            />
-          </div>
+          {funcs.length > 0 && (
+            <>
+              <div
+                onMouseDown={startResize}
+                className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-t border-border/40"
+              >
+                <div className="h-0.5 w-8 rounded-full bg-border transition-colors group-hover:bg-foreground/40" />
+              </div>
+              <div style={{ height: bottomHeight }} className="shrink-0">
+                <RunPanel
+                  funcs={funcs}
+                  wires={wires}
+                  config={configValues}
+                  workflowId={workflowId}
+                  workflowName={name}
+                  inputForm={inputForm}
+                  onInputForm={setInputForm}
+                  triggerFields={triggerFields}
+                  syncing={formSyncing}
+                  onStatus={setRunStatus}
+                  onData={setRunData}
+                  onRepair={onRepair}
+                />
+              </div>
+            </>
+          )}
         </div>
         <RightPanel
           active={activeTab}
