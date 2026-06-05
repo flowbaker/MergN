@@ -3,6 +3,7 @@ import { Zap } from "lucide-react";
 
 interface TriggerNodeData {
   fields: string[];
+  kind?: string;
 }
 
 export function TriggerNode({ data }: NodeProps) {
@@ -16,8 +17,8 @@ export function TriggerNode({ data }: NodeProps) {
           </div>
           <div className="flex min-w-0 flex-1 flex-col items-start justify-center gap-1 px-1">
             <h3 className="text-base font-medium leading-none">Trigger</h3>
-            <p className="text-xs leading-none text-muted-foreground">
-              workflow input
+            <p className="text-xs capitalize leading-none text-muted-foreground">
+              {d.kind ?? "manual"}
             </p>
           </div>
         </div>

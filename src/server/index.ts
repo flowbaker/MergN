@@ -11,8 +11,10 @@ import {
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { authorFunc } from "../agent/func-author";
 import { createWorkflowStore } from "./store";
+import { createRunStore, type RunDoc } from "./runs";
 import { runWorkflow } from "./run";
 import { createRegistry, publicAuth } from "../providers/registry";
 import { FileStore, assertSpace } from "../store/docstore";
@@ -21,7 +23,7 @@ import { authorProvider, repairProvider } from "../agent/provider-author";
 import { designWorkflow, planWorkflow } from "../agent/workflow-designer";
 import { createConnections } from "./connections";
 import { createOAuth } from "./oauth";
-import type { FuncDefinition } from "../atoms/index";
+import type { FuncDefinition, StepRecord } from "../atoms/index";
 
 const SYSTEM = [
   "You are a workflow builder assistant for an AI-native automation product.",
@@ -63,6 +65,46 @@ const registry = createRegistry(store);
 const oauth = createOAuth({ store, vault, registry });
 const connections = createConnections({ store, vault, oauth });
 const workflows = createWorkflowStore(store);
+const runs = createRunStore(store);
+
+async function runSavedWorkflow(
+  spaceId: string,
+  wf: {
+    id: string;
+    name: string;
+    funcs: unknown[];
+    wires: unknown[];
+    config?: Record<string, Record<string, string>>;
+  },
+  input: Record<string, unknown>,
+  trigger: string,
+): Promise<RunDoc> {
+  const startedAt = new Date().toISOString();
+  const records: StepRecord[] = [];
+  await runWorkflow(
+    { spaceId, registry, connections },
+    wf.funcs as Parameters<typeof runWorkflow>[1],
+    wf.wires as Parameters<typeof runWorkflow>[2],
+    input,
+    wf.config ?? {},
+    (record) => {
+      records.push(record);
+    },
+  );
+  const run: RunDoc = {
+    id: randomUUID(),
+    workflowId: wf.id,
+    workflowName: wf.name,
+    trigger,
+    status: records.some((r) => r.status === "failed") ? "failed" : "done",
+    input,
+    records,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  };
+  await runs.saveRun(spaceId, run);
+  return run;
+}
 
 function makeTools(spaceId: string) {
   return {
@@ -318,6 +360,7 @@ app.put("/api/workflows/:id", async (c) => {
     wires?: unknown[];
     positions?: Record<string, { x: number; y: number }>;
     config?: Record<string, Record<string, string>>;
+    trigger?: { kind: "manual" | "webhook" | "schedule" | "poll" | "event" };
   }>();
   const wf = await workflows.saveWorkflow(c.get("spaceId"), {
     id,
@@ -326,6 +369,7 @@ app.put("/api/workflows/:id", async (c) => {
     wires: body.wires ?? [],
     positions: body.positions ?? {},
     config: body.config ?? {},
+    trigger: body.trigger ?? { kind: "manual" },
   });
   return c.json(wf);
 });
@@ -342,20 +386,68 @@ app.post("/api/run", async (c) => {
     wires?: Parameters<typeof runWorkflow>[2];
     input?: Record<string, unknown>;
     config?: Record<string, Record<string, string>>;
+    workflowId?: string;
+    workflowName?: string;
   }>();
+  const input = body.input ?? {};
   return streamSSE(c, async (stream) => {
+    const startedAt = new Date().toISOString();
+    const records: StepRecord[] = [];
     await runWorkflow(
       { spaceId, registry, connections },
       body.funcs ?? [],
       body.wires ?? [],
-      body.input ?? {},
+      input,
       body.config ?? {},
       async (record) => {
+        records.push(record);
         await stream.writeSSE({ data: JSON.stringify(record) });
       },
     );
     await stream.writeSSE({ data: "[DONE]" });
+    if (body.workflowId) {
+      await runs.saveRun(spaceId, {
+        id: randomUUID(),
+        workflowId: body.workflowId,
+        workflowName: body.workflowName ?? "untitled",
+        trigger: "manual",
+        status: records.some((r) => r.status === "failed") ? "failed" : "done",
+        input,
+        records,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      });
+    }
   });
+});
+
+app.post("/api/hooks/:spaceId/:workflowId", async (c) => {
+  let spaceId: string;
+  try {
+    spaceId = assertSpace(c.req.param("spaceId"));
+  } catch {
+    return c.json({ error: "invalid space id" }, 400);
+  }
+  await registry.ensureSpace(spaceId);
+  const wf = await workflows.getWorkflow(spaceId, c.req.param("workflowId"));
+  if (!wf) return c.json({ error: "workflow not found" }, 404);
+  if (wf.trigger?.kind !== "webhook")
+    return c.json({ error: "workflow has no webhook trigger" }, 400);
+  const body = await c.req
+    .json<Record<string, unknown>>()
+    .catch(() => ({}) as Record<string, unknown>);
+  const run = await runSavedWorkflow(spaceId, wf, body ?? {}, "webhook");
+  return c.json({ ok: true, runId: run.id, status: run.status });
+});
+
+app.get("/api/runs", async (c) => {
+  const workflowId = c.req.query("workflow") || undefined;
+  return c.json(await runs.listRuns(c.get("spaceId"), workflowId));
+});
+
+app.get("/api/runs/:id", async (c) => {
+  const run = await runs.getRun(c.get("spaceId"), c.req.param("id"));
+  return run ? c.json(run) : c.json({ error: "not found" }, 404);
 });
 
 app.get("/api/spaces", async (c) => {

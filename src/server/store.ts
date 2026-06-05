@@ -2,6 +2,10 @@ import type { DocStore } from "../store/docstore";
 
 const COLLECTION = "workflows";
 
+export interface TriggerConfig {
+  kind: "manual" | "webhook" | "schedule" | "poll" | "event";
+}
+
 export interface SavedWorkflow {
   id: string;
   name: string;
@@ -9,6 +13,7 @@ export interface SavedWorkflow {
   wires: unknown[];
   positions: Record<string, { x: number; y: number }>;
   config: Record<string, Record<string, string>>;
+  trigger?: TriggerConfig;
   createdAt: string;
   updatedAt: string;
 }

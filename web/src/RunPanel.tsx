@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { AuthoredFunc, RunStepData, Wire } from "./types";
 import { spaceHeaders } from "./space";
+import { useRuns, fetchRun } from "./queries";
 
 interface RunRecord {
   nodeId: string;
@@ -31,6 +33,8 @@ export function RunPanel({
   funcs,
   wires,
   config,
+  workflowId,
+  workflowName,
   onStatus,
   onData,
   onRepair,
@@ -38,6 +42,8 @@ export function RunPanel({
   funcs: AuthoredFunc[];
   wires: Wire[];
   config: Record<string, Record<string, string>>;
+  workflowId: string | null;
+  workflowName: string;
   onStatus: (status: Record<string, string>) => void;
   onData: (data: Record<string, RunStepData>) => void;
   onRepair: (
@@ -50,11 +56,14 @@ export function RunPanel({
     },
   ) => void;
 }) {
+  const qc = useQueryClient();
+  const runsQuery = useRuns(workflowId);
   const [input, setInput] = useState("{}");
   const [records, setRecords] = useState<RunRecord[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"input" | "state">("input");
+  const [loadingRun, setLoadingRun] = useState<string | null>(null);
+  const [tab, setTab] = useState<"input" | "state" | "runs">("input");
 
   const titleOf = (nodeId: string) =>
     nodeId === "trigger"
@@ -84,7 +93,14 @@ export function RunPanel({
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...spaceHeaders() },
-        body: JSON.stringify({ funcs, wires, config, input: parsed }),
+        body: JSON.stringify({
+          funcs,
+          wires,
+          config,
+          input: parsed,
+          workflowId: workflowId ?? undefined,
+          workflowName,
+        }),
       });
       if (!res.body) throw new Error("no stream");
 
@@ -123,6 +139,34 @@ export function RunPanel({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
+      if (workflowId)
+        qc.invalidateQueries({ queryKey: ["runs", workflowId] });
+    }
+  };
+
+  const openRun = async (id: string) => {
+    setLoadingRun(id);
+    try {
+      const run = await fetchRun(id);
+      setRecords(run.records as RunRecord[]);
+      const status: Record<string, string> = {};
+      const dataByNode: Record<string, RunStepData> = {};
+      for (const r of run.records) {
+        status[r.nodeId] = r.status;
+        dataByNode[r.nodeId] = {
+          status: r.status,
+          resolvedInput: r.resolvedInput,
+          output: r.output,
+          error: r.error,
+        };
+      }
+      onStatus(status);
+      onData(dataByNode);
+      setTab("state");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingRun(null);
     }
   };
 
@@ -139,7 +183,7 @@ export function RunPanel({
         </Button>
 
         <div className="flex rounded-lg border border-border/50 bg-muted/50 p-0.5 text-xs">
-          {(["input", "state"] as const).map((t) => (
+          {(["input", "state", "runs"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -178,6 +222,49 @@ export function RunPanel({
             placeholder='{ "email": "ada@x.com", "amount": 2000 }'
             className="min-h-0 flex-1 resize-none rounded-xl border border-border/50 bg-background p-3 font-mono text-xs outline-none transition-colors focus:border-foreground/20"
           />
+        </div>
+      ) : tab === "runs" ? (
+        <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">
+          {!workflowId ? (
+            <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
+              Save the workflow to keep a history of its runs.
+            </div>
+          ) : (runsQuery.data?.length ?? 0) === 0 ? (
+            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+              No runs yet.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {runsQuery.data?.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => openRun(r.id)}
+                  className="flex w-full items-center gap-2 rounded-xl border border-border/50 bg-background/60 px-2.5 py-2 text-left transition-colors hover:border-border"
+                >
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      STATUS_DOT[r.status] ?? "bg-muted-foreground",
+                    )}
+                  />
+                  <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {r.trigger}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                    {new Date(r.startedAt).toLocaleString()}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                    {r.stepCount} step{r.stepCount === 1 ? "" : "s"}
+                  </span>
+                  {loadingRun === r.id && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      loading…
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">

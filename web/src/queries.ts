@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AuthoredFunc, Wire } from "./types";
+import type { AuthoredFunc, TriggerConfig, Wire } from "./types";
 import { spaceHeaders } from "./space";
 
 export interface WorkflowMeta {
@@ -16,6 +16,7 @@ export interface SavedWorkflow {
   wires: Wire[];
   positions: Record<string, { x: number; y: number }>;
   config: Record<string, Record<string, string>>;
+  trigger?: TriggerConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -27,6 +28,7 @@ export interface SaveInput {
   wires: Wire[];
   positions: Record<string, { x: number; y: number }>;
   config: Record<string, Record<string, string>>;
+  trigger: TriggerConfig;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -209,6 +211,49 @@ export function useDeleteConnection() {
       json<{ ok: boolean }>(`/api/connections/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
   });
+}
+
+export interface RunMeta {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  trigger: string;
+  status: string;
+  startedAt: string;
+  stepCount: number;
+}
+
+export interface RunRecord {
+  nodeId: string;
+  status: string;
+  output?: unknown;
+  error?: string;
+  resolvedInput?: unknown;
+}
+
+export interface RunDoc {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  trigger: string;
+  status: string;
+  input: Record<string, unknown>;
+  records: RunRecord[];
+  startedAt: string;
+  finishedAt: string;
+}
+
+export function useRuns(workflowId: string | null) {
+  return useQuery({
+    queryKey: ["runs", workflowId],
+    queryFn: () =>
+      json<RunMeta[]>(`/api/runs?workflow=${encodeURIComponent(workflowId!)}`),
+    enabled: !!workflowId,
+  });
+}
+
+export function fetchRun(id: string): Promise<RunDoc> {
+  return json<RunDoc>(`/api/runs/${id}`);
 }
 
 export function useRepairProvider() {

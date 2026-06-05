@@ -11,8 +11,9 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Zap } from "lucide-react";
 import { Chat } from "./Chat";
+import { TriggerDialog } from "./TriggerDialog";
 import { Pipeline } from "./Pipeline";
 import { Story } from "./Story";
 import { FuncNode } from "./FuncNode";
@@ -29,7 +30,13 @@ import {
   useConnections,
   type ConnectionMeta,
 } from "./queries";
-import type { AuthoredFunc, RunStepData, Wire, WorkflowOp } from "./types";
+import type {
+  AuthoredFunc,
+  RunStepData,
+  TriggerConfig,
+  Wire,
+  WorkflowOp,
+} from "./types";
 import { summarizeWorkflow, outputsOf } from "./lineage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,6 +116,11 @@ export function App() {
 
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [name, setName] = useState("untitled");
+  const [trigger, setTrigger] = useState<TriggerConfig>({ kind: "manual" });
+  const [savedTrigger, setSavedTrigger] = useState<TriggerConfig>({
+    kind: "manual",
+  });
+  const [triggerOpen, setTriggerOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">(() =>
     typeof document !== "undefined" &&
     document.documentElement.classList.contains("dark")
@@ -187,7 +199,10 @@ export function App() {
   }, [wires]);
 
   const onSelectNode = useCallback((id: string) => {
-    if (id === "trigger") return;
+    if (id === "trigger") {
+      setTriggerOpen(true);
+      return;
+    }
     setSelectedId(id);
     setActiveTab("node");
   }, []);
@@ -298,7 +313,7 @@ export function App() {
         position:
           prevPos.get("trigger") ??
           positionsRef.current["trigger"] ?? { x: 40, y: 160 },
-        data: { fields: triggerFields },
+        data: { fields: triggerFields, kind: trigger.kind },
       };
       return [triggerNode, ...funcNodes];
     });
@@ -309,6 +324,7 @@ export function App() {
     runStatus,
     connectedProviders,
     triggerFields,
+    trigger.kind,
     setNodes,
   ]);
 
@@ -338,6 +354,8 @@ export function App() {
     positionsRef.current = {};
     setWorkflowId(null);
     setName("untitled");
+    setTrigger({ kind: "manual" });
+    setSavedTrigger({ kind: "manual" });
   };
 
   const save = async () => {
@@ -350,8 +368,10 @@ export function App() {
       wires,
       positions,
       config: configValues,
+      trigger,
     });
     setWorkflowId(id);
+    setSavedTrigger(trigger);
   };
 
   const load = async (id: string) => {
@@ -363,6 +383,8 @@ export function App() {
     setConfigValues(wf.config ?? {});
     setWorkflowId(wf.id);
     setName(wf.name ?? "untitled");
+    setTrigger(wf.trigger ?? { kind: "manual" });
+    setSavedTrigger(wf.trigger ?? { kind: "manual" });
   };
 
   return (
@@ -415,21 +437,31 @@ export function App() {
           <ConnectionsPanel missing={missingProviders} />
         </div>
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card">
-          <div className="absolute left-3 top-3 z-10 flex rounded-lg border border-border/50 bg-muted/60 p-0.5 text-xs">
-            {(["story", "pipeline", "graph"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={
-                  "rounded-md px-2.5 py-1 capitalize transition-colors " +
-                  (view === v
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground")
-                }
-              >
-                {v}
-              </button>
-            ))}
+          <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
+            <div className="flex rounded-lg border border-border/50 bg-muted/60 p-0.5 text-xs">
+              {(["story", "pipeline", "graph"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={
+                    "rounded-md px-2.5 py-1 capitalize transition-colors " +
+                    (view === v
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setTriggerOpen(true)}
+              title="Configure trigger"
+              className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/60 px-2.5 py-1 text-xs text-foreground/90 transition-colors hover:border-border"
+            >
+              <Zap className="h-3.5 w-3.5 text-amber-400" />
+              <span className="capitalize">{trigger.kind}</span>
+            </button>
           </div>
           {missingProviders.length > 0 && (
             <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2">
@@ -486,6 +518,8 @@ export function App() {
               funcs={funcs}
               wires={wires}
               config={configValues}
+              workflowId={workflowId}
+              workflowName={name}
               onStatus={setRunStatus}
               onData={setRunData}
               onRepair={onRepair}
@@ -517,6 +551,15 @@ export function App() {
           }
         />
       </div>
+      {triggerOpen && (
+        <TriggerDialog
+          trigger={trigger}
+          onChange={setTrigger}
+          workflowId={workflowId}
+          dirty={trigger.kind !== savedTrigger.kind}
+          onClose={() => setTriggerOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -5,6 +5,12 @@ export interface Wire {
   toInput: string;
 }
 
+export type TriggerKind = "manual" | "webhook" | "schedule" | "poll" | "event";
+
+export interface TriggerConfig {
+  kind: TriggerKind;
+}
+
 export type WorkflowOp =
   | { key: string; kind: "funcs"; funcs: AuthoredFunc[] }
   | { key: string; kind: "wires"; wires: Wire[] }
