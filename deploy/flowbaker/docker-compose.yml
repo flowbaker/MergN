@@ -29,6 +29,9 @@ services:
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       mongo:
         condition: service_healthy
