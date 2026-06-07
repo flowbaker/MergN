@@ -82,8 +82,12 @@ const stepBodyZ = z.object({
   bodySource: z
     .string()
     .describe(
-      "JS function body only. Reads from input.<field>, returns an object with exactly the required output fields, ends with 'return {...}'. No function/async wrapper.",
+      "An ES module that `export default`s `async (ctx, input) => result`. Reads from input.<field>, returns an object with exactly the required output fields. May use top-level `import` for npm packages listed in `dependencies`.",
     ),
+  dependencies: z
+    .array(z.string())
+    .describe("npm packages this step imports directly; empty array if none.")
+    .optional(),
   dangerClass: z.enum(["benign", "costly", "catastrophic"]).optional(),
   idempotencyMechanism: z
     .enum(["provider-key", "upsert", "read-before-write", "claim", "none"])
@@ -91,11 +95,11 @@ const stepBodyZ = z.object({
 });
 
 const BODY_SYSTEM = [
-  "You write the JavaScript BODY of a single workflow step.",
+  "You write a single workflow step as an ES module that `export default`s `async (ctx, input) => result`.",
   "In scope: `input` (an object) and, for effectful steps, `ctx.connections.<provider>` (a client with the given API).",
   "Read EVERY value you need from input.<field>. For values that come from the user, use natural field names (amount, email, channel, text). For values that come from an upstream step, use the input names listed as upstream-provided.",
   "Include ALL values the step needs — especially every required parameter of the external call (e.g. a Slack message needs input.channel AND input.text).",
-  "Return an object containing EXACTLY the required output fields. bodySource is the body only, ends with 'return {...}', no wrapper.",
+  "Return an object containing EXACTLY the required output fields. You may use top-level `import` for npm packages; list each in `dependencies`.",
 ].join("\n");
 
 async function authorStepBody(
@@ -224,6 +228,7 @@ export async function designWorkflow(
         required: step.outputs,
       },
       bodySource: body.bodySource,
+      dependencies: body.dependencies ?? [],
       requires:
         step.effectful && step.provider
           ? [{ name: step.provider, provider: step.provider, scopes: [] }]

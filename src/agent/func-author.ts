@@ -7,14 +7,15 @@ import type { FuncDefinition, PortDef, Schema } from "../atoms/index";
 
 const SYSTEM = [
   "You are an agent that authors a single 'func' for a workflow automation system.",
-  "A func takes typed input and returns typed output. The body is plain JavaScript:",
+  "A func takes typed input and returns typed output. bodySource is an ES module:",
+  "- it `export default`s `async (ctx, input) => result`",
   "- it reads from the `input` object (input.fieldName)",
   "- when effectful, it calls external services via ctx.connections.<name> (never touch the raw token)",
   "- it always returns an object",
+  "- it MAY use top-level `import` for npm packages; list every imported package in `dependencies`",
   "Rules:",
   "- If there is no side effect, set pure=true, requires=[], and kind is usually 'adapter'.",
   "- If it calls an external service, set pure=false, fill requires, and pick a suitable dangerClass and idempotencyMechanism.",
-  "- bodySource is the FUNCTION BODY ONLY (no function/async wrapper) and ends with 'return'.",
   "- When a provider's connection API is given below, declare a connection with that provider id and call it exactly as documented.",
 ].join("\n");
 
@@ -89,6 +90,7 @@ function toFuncDefinition(d: FuncDraft): FuncDefinition {
   const body = {
     language: "javascript" as const,
     source: d.bodySource,
+    dependencies: d.dependencies ?? [],
     generatedBy: { agent: "func-author", prompt: d.id },
   };
 

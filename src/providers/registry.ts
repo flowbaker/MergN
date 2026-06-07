@@ -1,14 +1,24 @@
 import type { DocStore } from "../store/docstore";
-import type { ProviderClient } from "../atoms/index";
 
 const COLLECTION = "providers";
 
 export interface AuthField {
   name: string;
   label: string;
-  type: "text" | "password";
+  type: "text" | "password" | "number";
   placeholder?: string;
   required?: boolean;
+  help?: string;
+  secret?: boolean;
+}
+
+export interface Credential {
+  kind?: "oauth";
+  fields: AuthField[];
+}
+
+export interface SandboxPolicy {
+  egressDomain?: string;
 }
 
 export type AuthSpec =
@@ -51,13 +61,12 @@ export interface ProviderSpec {
   apiDoc: string;
   env?: string;
   auth?: AuthSpec;
+  credential?: Credential;
   setupGuide?: SetupGuide;
-  egressDomain?: string;
+  sandbox?: SandboxPolicy;
   aiWritten?: boolean;
-  // JS function body (token, fetch) => clientObject. Used by the remote code-exec
-  // broker (proxy mode) to run the provider host-side without leaking the token.
   clientSource?: string;
-  createClient: (token: string | undefined) => ProviderClient;
+  dependencies?: string[];
 }
 
 export interface ProviderDraft {
@@ -65,9 +74,11 @@ export interface ProviderDraft {
   name: string;
   keywords: string[];
   authEnv: string;
-  egressDomain: string;
+  sandbox: SandboxPolicy;
   apiDoc: string;
   clientSource: string;
+  dependencies?: string[];
+  credential?: Credential;
   setupGuide?: SetupGuide;
 }
 
@@ -78,50 +89,29 @@ builtins.set("slack", {
   name: "Slack",
   scopes: ["chat:write", "channels:read"],
   keywords: ["slack", "message", "notify", "notification", "chat", "channel", "alert"],
-  egressDomain: "slack.com",
+  sandbox: { egressDomain: "slack.com" },
   apiDoc:
     "give the func a 'channel' input and a 'text' input, then call: const ts = await ctx.connections.<name>.postMessage(input.channel, input.text); return { ts }. Connection: name 'slack', provider 'slack', scope 'chat:write'.",
   env: "SLACK_TOKEN",
+  dependencies: [],
   clientSource: `
-    const send = async (a, b) => {
-      const arg = (typeof a === 'object' && a !== null) ? a : null;
-      const channel = arg ? arg.channel : a;
-      const text = arg ? arg.text : b;
-      const res = await fetch('https://slack.com/api/chat.postMessage', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ channel, text }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error('slack error: ' + data.error);
-      return data.ts || '';
-    };
-    return new Proxy({}, { get: () => send });
-  `,
-  createClient: (token) => {
-    const send = async (a: unknown, b?: unknown): Promise<string> => {
-      const arg =
-        typeof a === "object" && a !== null ? (a as Record<string, unknown>) : null;
-      const channel = arg ? arg.channel : a;
-      const text = arg ? arg.text : b;
-      const res = await fetch("https://slack.com/api/chat.postMessage", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify({ channel, text }),
-      });
-      const data = (await res.json()) as {
-        ok: boolean;
-        ts?: string;
-        error?: string;
+    export default (cred, fetch) => {
+      const send = async (a, b) => {
+        const arg = (typeof a === 'object' && a !== null) ? a : null;
+        const channel = arg ? arg.channel : a;
+        const text = arg ? arg.text : b;
+        const res = await fetch('https://slack.com/api/chat.postMessage', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + cred.value, 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ channel, text }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error('slack error: ' + data.error);
+        return data.ts || '';
       };
-      if (!data.ok) throw new Error(`slack error: ${data.error}`);
-      return data.ts ?? "";
+      return new Proxy({}, { get: () => send });
     };
-    return new Proxy({}, { get: () => send });
-  },
+  `,
 });
 
 builtins.set("github", {
@@ -129,7 +119,7 @@ builtins.set("github", {
   name: "GitHub",
   scopes: ["repo"],
   keywords: ["github", "git", "issue", "repo", "repository", "pull request", "pr", "commit"],
-  egressDomain: "api.github.com",
+  sandbox: { egressDomain: "api.github.com" },
   apiDoc:
     "methods: const me = await ctx.connections.<name>.getUser(); returns { login, id, name }. const issue = await ctx.connections.<name>.createIssue({ owner, repo, title, body }); returns { number, url }. Connection: name 'github', provider 'github'.",
   auth: {
@@ -163,72 +153,40 @@ builtins.set("github", {
       },
     ],
   },
+  dependencies: [],
   clientSource: `
-    const api = async (path, init) => {
-      const res = await fetch('https://api.github.com' + path, {
-        ...init,
-        headers: {
-          Authorization: 'Bearer ' + token,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'workflow-builder',
-          ...((init && init.headers) || {}),
-        },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error('github error: ' + (data.message || res.status));
-      return data;
-    };
-    return {
-      getUser: async () => {
-        const u = await api('/user');
-        return { login: u.login, id: u.id, name: u.name };
-      },
-      createIssue: async (arg) => {
-        const a = arg || {};
-        const issue = await api('/repos/' + a.owner + '/' + a.repo + '/issues', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: a.title, body: a.body }),
+    export default (cred, fetch) => {
+      const api = async (path, init) => {
+        const res = await fetch('https://api.github.com' + path, {
+          ...init,
+          headers: {
+            Authorization: 'Bearer ' + cred.accessToken,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'workflow-builder',
+            ...((init && init.headers) || {}),
+          },
         });
-        return { number: issue.number, url: issue.html_url };
-      },
+        const data = await res.json();
+        if (!res.ok) throw new Error('github error: ' + (data.message || res.status));
+        return data;
+      };
+      return {
+        getUser: async () => {
+          const u = await api('/user');
+          return { login: u.login, id: u.id, name: u.name };
+        },
+        createIssue: async (arg) => {
+          const a = arg || {};
+          const issue = await api('/repos/' + a.owner + '/' + a.repo + '/issues', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: a.title, body: a.body }),
+          });
+          return { number: issue.number, url: issue.html_url };
+        },
+      };
     };
   `,
-  createClient: (token) => {
-    const api = async (
-      path: string,
-      init?: RequestInit,
-    ): Promise<Record<string, unknown>> => {
-      const res = await fetch(`https://api.github.com${path}`, {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "workflow-builder",
-          ...(init?.headers ?? {}),
-        },
-      });
-      const data = (await res.json()) as Record<string, unknown>;
-      if (!res.ok)
-        throw new Error(`github error: ${(data.message as string) ?? res.status}`);
-      return data;
-    };
-    return {
-      getUser: async () => {
-        const u = await api("/user");
-        return { login: u.login, id: u.id, name: u.name };
-      },
-      createIssue: async (arg: unknown) => {
-        const a = (arg ?? {}) as Record<string, unknown>;
-        const issue = await api(`/repos/${a.owner}/${a.repo}/issues`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: a.title, body: a.body }),
-        });
-        return { number: issue.number, url: issue.html_url };
-      },
-    };
-  },
 });
 
 builtins.set("http", {
@@ -238,8 +196,9 @@ builtins.set("http", {
   keywords: ["http", "https", "api", "fetch", "request", "rest", "url", "webhook", "get", "post"],
   apiDoc:
     "call: const data = await ctx.connections.<name>.get(url); (returns parsed JSON) or .post(url, jsonBody). Connection: name 'http', provider 'http', no scopes.",
+  dependencies: [],
   clientSource: `
-    return {
+    export default (cred, fetch) => ({
       get: async (url) => {
         const res = await fetch(String(url));
         return res.json();
@@ -252,47 +211,9 @@ builtins.set("http", {
         });
         return res.json();
       },
-    };
+    });
   `,
-  createClient: () => ({
-    get: async (url: unknown) => {
-      const res = await fetch(String(url));
-      return res.json();
-    },
-    post: async (url: unknown, body: unknown) => {
-      const res = await fetch(String(url), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      return res.json();
-    },
-  }),
 });
-
-function guardedFetch(domain: string) {
-  return async (input: unknown, init?: unknown): Promise<Response> => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input instanceof Request
-            ? input.url
-            : String(input);
-    let host: string;
-    try {
-      host = new URL(url).host;
-    } catch {
-      throw new Error("egress blocked: invalid url");
-    }
-    const allowed = host === domain || host.endsWith(`.${domain}`);
-    if (!allowed) {
-      throw new Error(`egress blocked: ${host} (allowed: ${domain})`);
-    }
-    return fetch(url, init as RequestInit | undefined);
-  };
-}
 
 function specFromDraft(d: ProviderDraft): ProviderSpec {
   return {
@@ -302,25 +223,35 @@ function specFromDraft(d: ProviderDraft): ProviderSpec {
     keywords: d.keywords,
     apiDoc: d.apiDoc,
     env: d.authEnv || undefined,
+    credential: d.credential,
     setupGuide: d.setupGuide,
-    egressDomain: d.egressDomain,
+    sandbox: d.sandbox,
     aiWritten: true,
     clientSource: d.clientSource,
-    createClient: (token) => {
-      const scopedFetch = d.egressDomain ? guardedFetch(d.egressDomain) : fetch;
-      const factory = new Function("token", "fetch", d.clientSource);
-      return factory(token, scopedFetch) as ProviderClient;
-    },
+    dependencies: d.dependencies ?? [],
   };
 }
 
+function humanize(env: string): string {
+  const cleaned = env.replace(/[_-]+/g, " ").trim().toLowerCase();
+  if (!cleaned) return "API key";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 export function authOf(spec: ProviderSpec): AuthSpec {
-  if (spec.auth) return spec.auth;
+  if (spec.auth?.type === "oauth2") return spec.auth;
+  if (spec.credential?.fields?.length)
+    return { type: "apiKey", fields: spec.credential.fields };
   if (spec.env)
     return {
       type: "apiKey",
       fields: [
-        { name: "key", label: "API key", type: "password", required: true },
+        {
+          name: "value",
+          label: humanize(spec.env),
+          type: "password",
+          required: true,
+        },
       ],
     };
   return { type: "none" };
@@ -330,7 +261,20 @@ export function publicAuth(spec: ProviderSpec): PublicAuth {
   const auth = authOf(spec);
   const guide = spec.setupGuide;
   if (auth.type === "apiKey")
-    return { type: "apiKey", name: spec.name, fields: auth.fields, setupGuide: guide };
+    return {
+      type: "apiKey",
+      name: spec.name,
+      fields: auth.fields.map((f) => ({
+        name: f.name,
+        label: f.label,
+        type: f.type,
+        placeholder: f.placeholder,
+        required: f.required,
+        help: f.help,
+        secret: f.secret,
+      })),
+      setupGuide: guide,
+    };
   if (auth.type === "oauth2")
     return { type: "oauth2", name: spec.name, scopes: auth.scopes, setupGuide: guide };
   return { type: "none", name: spec.name, setupGuide: guide };
@@ -344,11 +288,6 @@ export interface Registry {
   persistProvider(spaceId: string, draft: ProviderDraft): Promise<void>;
   getProviderDraft(spaceId: string, id: string): Promise<ProviderDraft | null>;
   needsAuth(spaceId: string, providerId: string): boolean;
-  buildClientWithSecret(
-    spaceId: string,
-    providerId: string,
-    secret: string | undefined,
-  ): ProviderClient | null;
 }
 
 export function createRegistry(store: DocStore): Registry {
@@ -432,13 +371,6 @@ export function createRegistry(store: DocStore): Registry {
     needsAuth(spaceId, providerId) {
       const spec = getProvider(spaceId, providerId);
       return !!spec && authOf(spec).type !== "none";
-    },
-
-    buildClientWithSecret(spaceId, providerId, secret) {
-      const spec = getProvider(spaceId, providerId);
-      if (!spec) return null;
-      if (authOf(spec).type !== "none" && !secret) return null;
-      return spec.createClient(secret);
     },
   };
 }

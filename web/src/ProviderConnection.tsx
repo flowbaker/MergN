@@ -6,14 +6,20 @@ import {
   useConnections,
   useCreateConnection,
   useDeleteConnection,
+  useProviderAuth,
 } from "./queries";
 
 export function ProviderConnection({ provider }: { provider: string }) {
   const { data: conns = [] } = useConnections();
+  const auth = useProviderAuth(provider);
   const create = useCreateConnection();
   const del = useDeleteConnection();
-  const [key, setKey] = useState("");
+  const [cred, setCred] = useState<Record<string, string>>({});
   const conn = conns.find((c) => c.provider === provider);
+  const fields = auth.data?.fields ?? [];
+  const missingRequired = fields.some(
+    (f) => f.required && !(cred[f.name] ?? "").trim(),
+  );
 
   if (conn) {
     return (
@@ -33,24 +39,43 @@ export function ProviderConnection({ provider }: { provider: string }) {
     );
   }
 
+  const submit = () => {
+    const trimmed: Record<string, string> = {};
+    for (const f of fields) {
+      const v = (cred[f.name] ?? "").trim();
+      if (v) trimmed[f.name] = v;
+    }
+    create.mutate({ provider, cred: trimmed });
+    setCred({});
+  };
+
   return (
     <div className="space-y-1">
       <div className="truncate font-mono text-xs">{provider}</div>
       <div className="flex gap-2">
-        <Input
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          type="password"
-          placeholder="paste API key…"
-          className="h-8 min-w-0 flex-1 text-xs"
-        />
+        {fields.map((f, i) => (
+          <Input
+            key={f.name}
+            value={cred[f.name] ?? ""}
+            onChange={(e) =>
+              setCred((c) => ({ ...c, [f.name]: e.target.value }))
+            }
+            type={
+              f.type === "number"
+                ? "number"
+                : f.type === "text"
+                  ? "text"
+                  : "password"
+            }
+            placeholder={f.placeholder ?? f.label}
+            autoFocus={i === 0}
+            className="h-8 min-w-0 flex-1 text-xs"
+          />
+        ))}
         <Button
           size="sm"
-          disabled={!key.trim() || create.isPending}
-          onClick={() => {
-            create.mutate({ provider, key: key.trim() });
-            setKey("");
-          }}
+          disabled={missingRequired || create.isPending}
+          onClick={submit}
         >
           Connect
         </Button>

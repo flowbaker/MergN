@@ -113,7 +113,7 @@ export function ConnectionDialog({
   const del = useDeleteConnection();
   const qc = useQueryClient();
 
-  const [key, setKey] = useState("");
+  const [cred, setCred] = useState<Record<string, string>>({});
   const [account, setAccount] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -130,9 +130,19 @@ export function ConnectionDialog({
     };
   }, []);
 
+  const fields = auth.data?.fields ?? [];
+  const missingRequired = fields.some(
+    (f) => f.required && !(cred[f.name] ?? "").trim(),
+  );
+
   const connectApiKey = () => {
+    const trimmed: Record<string, string> = {};
+    for (const f of fields) {
+      const v = (cred[f.name] ?? "").trim();
+      if (v) trimmed[f.name] = v;
+    }
     create.mutate(
-      { provider, key: key.trim(), account: account.trim() || undefined },
+      { provider, cred: trimmed, account: account.trim() || undefined },
       { onSuccess: onClose },
     );
   };
@@ -174,7 +184,6 @@ export function ConnectionDialog({
     if (connection) del.mutate(connection.id, { onSuccess: onClose });
   };
 
-  const field = auth.data?.fields?.[0];
   const configured = oauthStatus.data?.configured ?? false;
   const needsEndpoints = oauthStatus.data?.needsEndpoints ?? false;
 
@@ -356,13 +365,38 @@ export function ConnectionDialog({
                 <Divider label="Credentials" />
               </>
             )}
-            <Input
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              type={field?.type === "text" ? "text" : "password"}
-              placeholder={field?.label ?? field?.placeholder ?? "API key"}
-              autoFocus
-            />
+            {fields.map((f, i) => (
+              <div key={f.name} className="space-y-1">
+                <label className="flex items-center gap-2 text-xs">
+                  <span className="font-medium">{f.label}</span>
+                  {f.required && (
+                    <span className="text-[10px] text-rose-300/70">
+                      required
+                    </span>
+                  )}
+                </label>
+                <Input
+                  value={cred[f.name] ?? ""}
+                  onChange={(e) =>
+                    setCred((c) => ({ ...c, [f.name]: e.target.value }))
+                  }
+                  type={
+                    f.type === "number"
+                      ? "number"
+                      : f.type === "text"
+                        ? "text"
+                        : "password"
+                  }
+                  placeholder={f.placeholder ?? f.label}
+                  autoFocus={i === 0}
+                />
+                {f.help && (
+                  <p className="text-[11px] leading-snug text-muted-foreground/70">
+                    {f.help}
+                  </p>
+                )}
+              </div>
+            ))}
             <Input
               value={account}
               onChange={(e) => setAccount(e.target.value)}
@@ -370,7 +404,7 @@ export function ConnectionDialog({
             />
             <Button
               className="w-full"
-              disabled={!key.trim() || create.isPending}
+              disabled={missingRequired || create.isPending}
               onClick={connectApiKey}
             >
               {create.isPending ? "connecting…" : "Connect"}

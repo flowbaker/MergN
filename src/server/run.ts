@@ -25,6 +25,7 @@ import {
 import type { Registry } from "../providers/registry";
 import type { Connections } from "./connections";
 import { RemoteSandboxRuntime } from "./remote-sandbox-runtime";
+import { LocalRuntime } from "./local-runtime";
 
 export interface RunDeps {
   spaceId: string;
@@ -65,6 +66,7 @@ interface RunFunc {
   inputs: RunInput[];
   outputSchema: Schema;
   bodySource: string;
+  dependencies?: string[];
   requires: { name: string; provider: string; scopes: string[] }[];
   dangerClass: string | null;
   idempotency: { key: string; mechanism: string } | null;
@@ -102,6 +104,7 @@ function toDef(f: RunFunc): FuncDefinition {
   const body = {
     language: "javascript" as const,
     source: f.bodySource,
+    dependencies: f.dependencies ?? [],
     generatedBy: { agent: "builder", prompt: f.id },
   };
   const kind = f.kind === "library" ? ("library" as const) : ("adapter" as const);
@@ -170,57 +173,19 @@ function toNode(
   };
 }
 
-class EvalRuntime implements Runtime {
-  async run(
-    def: FuncDefinition,
-    ctx: FuncContext,
-    input: Record<string, unknown>,
-  ): Promise<unknown> {
-    const fn = new Function(
-      "ctx",
-      "input",
-      `return (async () => { ${def.body.source} })()`,
-    );
-    return await fn(ctx, input);
-  }
-}
-
-const stubClient: ProviderClient = new Proxy(
-  {},
-  { get: () => async () => "stubbed" },
-);
-
-class ConnectionsResolver implements ConnectionResolver {
-  constructor(private deps: RunDeps) {}
-  async inject(node: FuncNode): Promise<Record<string, ProviderClient>> {
-    const { spaceId, registry, connections } = this.deps;
-    const clients: Record<string, ProviderClient> = {};
-    for (const [name, provider] of Object.entries(node.connections)) {
-      let secret = await connections.getAccessToken(spaceId, provider);
-      if (!secret) {
-        const spec = registry.getProvider(spaceId, provider);
-        if (spec?.env) secret = process.env[spec.env] ?? null;
-      }
-      clients[name] =
-        registry.buildClientWithSecret(spaceId, provider, secret ?? undefined) ??
-        stubClient;
-    }
-    return clients;
-  }
-}
-
 export interface RemoteProviderCarrier {
   __remoteProvider: true;
   clientSource: string;
-  secret?: string;
+  cred?: Record<string, string>;
   egressDomain?: string;
+  dependencies?: string[];
 }
 
-// Used with RemoteSandboxRuntime: instead of building live clients (which can't cross
-// into the remote microVM), it carries each provider's clientSource + secret +
-// egressDomain so RemoteSandboxRuntime can forward them as the /run `providers` payload.
-// The secret stays host-side; the code-exec broker runs clientSource with it.
-class RemoteConnectionsResolver implements ConnectionResolver {
+// Resolves each declared connection to a carrier (clientSource + cred + egressDomain
+// + dependencies). The cred is resolved host-side (stored connection or env). Both runtimes
+// consume carriers: LocalRuntime builds the client on the host, RemoteSandboxRuntime
+// forwards them to the microVM. The provider client itself is built inside the runtime.
+class CarrierConnectionsResolver implements ConnectionResolver {
   constructor(private deps: RunDeps) {}
   async inject(node: FuncNode): Promise<Record<string, ProviderClient>> {
     const { spaceId, registry, connections } = this.deps;
@@ -228,13 +193,17 @@ class RemoteConnectionsResolver implements ConnectionResolver {
     for (const [name, provider] of Object.entries(node.connections)) {
       const spec = registry.getProvider(spaceId, provider);
       if (!spec?.clientSource) continue;
-      let secret = await connections.getAccessToken(spaceId, provider);
-      if (!secret && spec.env) secret = process.env[spec.env] ?? null;
+      let cred = await connections.getCredential(spaceId, provider);
+      if (!cred && spec.env) {
+        const envValue = process.env[spec.env];
+        if (envValue !== undefined) cred = { value: envValue };
+      }
       const carrier: RemoteProviderCarrier = {
         __remoteProvider: true,
         clientSource: spec.clientSource,
-        secret: secret ?? undefined,
-        egressDomain: spec.egressDomain,
+        cred: cred ?? undefined,
+        egressDomain: spec.sandbox?.egressDomain,
+        dependencies: spec.dependencies ?? [],
       };
       out[name] = carrier;
     }
@@ -271,10 +240,8 @@ export async function runWorkflow(
   }
   const runtime: Runtime = isRemote
     ? new RemoteSandboxRuntime()
-    : new EvalRuntime();
-  const resolver: ConnectionResolver = isRemote
-    ? new RemoteConnectionsResolver(deps)
-    : new ConnectionsResolver(deps);
+    : new LocalRuntime();
+  const resolver: ConnectionResolver = new CarrierConnectionsResolver(deps);
 
   const worker = new Worker(
     workflow,

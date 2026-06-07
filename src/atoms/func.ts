@@ -5,6 +5,7 @@ import type { ConnectionRequirement } from "./connection";
 export interface FuncBody {
   language: "javascript";
   source: string;
+  dependencies?: string[];
   generatedBy: { agent: string; prompt: string };
 }
 

@@ -34,7 +34,12 @@ export const funcDraftZ = z.object({
   bodySource: z
     .string()
     .describe(
-      "JavaScript function body only. Reads from the `input` object, uses ctx.connections.<name> when effectful, ends with 'return {...}'. No function/async wrapper.",
+      "An ES module that `export default`s `async (ctx, input) => result`. Read from `input`, use ctx.connections.<name> when effectful, and return the output object. Use top-level `import` for any npm package you list in `dependencies`. Example: \"export default async (ctx, input) => { const r = await ctx.connections.slack.postMessage(input.channel, input.text); return { ts: r }; };\"",
+    ),
+  dependencies: z
+    .array(z.string())
+    .describe(
+      "npm packages this func imports directly (e.g. ['dayjs']). Empty array if none. Provider packages do not go here.",
     ),
   requires: z
     .array(

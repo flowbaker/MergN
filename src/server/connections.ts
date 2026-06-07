@@ -38,7 +38,7 @@ export interface Connections {
   createApiKeyConnection(
     spaceId: string,
     provider: string,
-    key: string,
+    cred: Record<string, string>,
     account?: string,
   ): Promise<ConnectionMeta>;
   createOAuthConnection(
@@ -54,6 +54,10 @@ export interface Connections {
   ): Promise<ConnectionMeta>;
   deleteConnection(spaceId: string, id: string): Promise<void>;
   getAccessToken(spaceId: string, provider: string): Promise<string | null>;
+  getCredential(
+    spaceId: string,
+    provider: string,
+  ): Promise<Record<string, string> | null>;
 }
 
 export function createConnections(deps: {
@@ -80,8 +84,8 @@ export function createConnections(deps: {
       return docs.map(toMeta).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     },
 
-    async createApiKeyConnection(spaceId, provider, key, account) {
-      const vaultRef = await vault.put(spaceId, key);
+    async createApiKeyConnection(spaceId, provider, cred, account) {
+      const vaultRef = await vault.put(spaceId, JSON.stringify(cred));
       const doc: ConnectionDoc = {
         id: randomUUID(),
         provider,
@@ -125,44 +129,73 @@ export function createConnections(deps: {
     async getAccessToken(spaceId, provider) {
       const conn = await firstConnectionFor(spaceId, provider);
       if (!conn) return null;
+      return resolveToken(spaceId, provider, conn);
+    },
 
-      if (
-        conn.kind === "oauth2" &&
-        conn.refreshRef &&
-        expiringSoon(conn.expiresAt)
-      ) {
-        const refreshToken = await vault.get(spaceId, conn.refreshRef);
-        if (refreshToken) {
-          try {
-            const next = await oauth.refreshOAuthToken(
-              spaceId,
-              provider,
-              refreshToken,
-            );
-            const updated: ConnectionDoc = {
-              ...conn,
-              expiresAt: next.expiresAt ?? conn.expiresAt,
-            };
-            await vault.remove(spaceId, conn.vaultRef);
-            updated.vaultRef = await vault.put(spaceId, next.accessToken);
-            if (next.refreshToken) {
-              await vault.remove(spaceId, conn.refreshRef);
-              updated.refreshRef = await vault.put(spaceId, next.refreshToken);
-            }
-            await store.put(
-              spaceId,
-              COLLECTION,
-              updated.id,
-              updated as unknown as Record<string, unknown>,
-            );
-            return next.accessToken;
-          } catch {
-            return vault.get(spaceId, conn.vaultRef);
+    async getCredential(spaceId, provider) {
+      const conn = await firstConnectionFor(spaceId, provider);
+      if (!conn) return null;
+
+      if (conn.kind === "apiKey") {
+        const raw = await vault.get(spaceId, conn.vaultRef);
+        if (raw == null) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, string>;
           }
+          return { value: raw };
+        } catch {
+          return { value: raw };
         }
       }
 
-      return vault.get(spaceId, conn.vaultRef);
+      const accessToken = await resolveToken(spaceId, provider, conn);
+      return accessToken == null ? null : { accessToken };
     },
   };
+
+  async function resolveToken(
+    spaceId: string,
+    provider: string,
+    conn: ConnectionDoc,
+  ): Promise<string | null> {
+    if (
+      conn.kind === "oauth2" &&
+      conn.refreshRef &&
+      expiringSoon(conn.expiresAt)
+    ) {
+      const refreshToken = await vault.get(spaceId, conn.refreshRef);
+      if (refreshToken) {
+        try {
+          const next = await oauth.refreshOAuthToken(
+            spaceId,
+            provider,
+            refreshToken,
+          );
+          const updated: ConnectionDoc = {
+            ...conn,
+            expiresAt: next.expiresAt ?? conn.expiresAt,
+          };
+          await vault.remove(spaceId, conn.vaultRef);
+          updated.vaultRef = await vault.put(spaceId, next.accessToken);
+          if (next.refreshToken) {
+            await vault.remove(spaceId, conn.refreshRef);
+            updated.refreshRef = await vault.put(spaceId, next.refreshToken);
+          }
+          await store.put(
+            spaceId,
+            COLLECTION,
+            updated.id,
+            updated as unknown as Record<string, unknown>,
+          );
+          return next.accessToken;
+        } catch {
+          return vault.get(spaceId, conn.vaultRef);
+        }
+      }
+    }
+
+    return vault.get(spaceId, conn.vaultRef);
+  }
 }

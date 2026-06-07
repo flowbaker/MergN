@@ -13,15 +13,16 @@ interface RunResult {
 interface ProviderPayload {
   name: string;
   clientSource: string;
-  secret: string;
+  cred: Record<string, string>;
   egressDomain: string;
 }
 
 interface RemoteCarrier {
   __remoteProvider?: boolean;
   clientSource?: string;
-  secret?: string;
+  cred?: Record<string, string>;
   egressDomain?: string;
+  dependencies?: string[];
 }
 
 // ctx.connections holds RemoteProviderCarrier objects (from RemoteConnectionsResolver),
@@ -35,7 +36,7 @@ function toProviders(connections: Record<string, unknown>): ProviderPayload[] {
     out.push({
       name,
       clientSource: c.clientSource,
-      secret: c.secret ?? "",
+      cred: c.cred ?? {},
       egressDomain: c.egressDomain ?? "",
     });
   }
@@ -60,6 +61,12 @@ export class RemoteSandboxRuntime implements Runtime {
     input: Record<string, unknown>,
   ): Promise<unknown> {
     const providers = toProviders(ctx.connections);
+    const dependencies = [
+      ...(def.body.dependencies ?? []),
+      ...Object.values(ctx.connections ?? {}).flatMap(
+        (v) => (v as RemoteCarrier)?.dependencies ?? [],
+      ),
+    ].filter((v, i, a) => a.indexOf(v) === i);
     const res = await fetch(this.url + "/run", {
       method: "POST",
       headers: {
@@ -72,6 +79,7 @@ export class RemoteSandboxRuntime implements Runtime {
         idempotencyKey: ctx.idempotencyKey,
         timeoutSec: this.timeoutSec,
         providers: providers.length ? providers : undefined,
+        dependencies: dependencies.length ? dependencies : undefined,
       }),
     });
 

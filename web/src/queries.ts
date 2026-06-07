@@ -126,9 +126,11 @@ export interface ConnectionMeta {
 export interface AuthField {
   name: string;
   label: string;
-  type: "text" | "password";
+  type: "text" | "password" | "number";
   placeholder?: string;
   required?: boolean;
+  help?: string;
+  secret?: boolean;
 }
 
 export interface SetupStep {
@@ -218,7 +220,11 @@ export function useConnections() {
 export function useCreateConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { provider: string; key: string; account?: string }) =>
+    mutationFn: (input: {
+      provider: string;
+      cred: Record<string, string>;
+      account?: string;
+    }) =>
       json<ConnectionMeta>("/api/connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

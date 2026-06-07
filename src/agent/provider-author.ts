@@ -11,11 +11,19 @@ export const providerDraftZ = z.object({
   authEnv: z
     .string()
     .describe(
-      "env var name holding the API token/key, e.g. 'NOTION_TOKEN'. Empty string only if the API needs no auth.",
+      "env var name holding the credential — an API token/key (e.g. 'NOTION_TOKEN') or a database connection string (e.g. 'DATABASE_URL'). Empty string only if the service needs no auth.",
     ),
-  egressDomain: z
-    .string()
-    .describe("the single API hostname this provider talks to, e.g. 'api.notion.com'"),
+  sandbox: z
+    .object({
+      egressDomain: z
+        .string()
+        .describe(
+          "the single host this provider talks to — the API hostname (e.g. 'api.notion.com') or the database host (e.g. 'ep-xxx.neon.tech').",
+        ),
+    })
+    .describe(
+      "Execution/isolation policy for the sandbox: the single host egress is locked to. This is runtime policy, not user-facing form data.",
+    ),
   apiDoc: z
     .string()
     .describe(
@@ -24,7 +32,32 @@ export const providerDraftZ = z.object({
   clientSource: z
     .string()
     .describe(
-      "JS function BODY that receives a `token` variable and returns an object of async methods that call the real API with fetch using the token. Ends with 'return { ... }'. No function/async wrapper.",
+      "An ES module that `export default`s a factory `(cred, fetch) => ({ ...asyncMethods })`. `cred` is an object keyed by the names you declare in `credential.fields` (e.g. `cred.apiKey`, `cred.connectionString`, or `cred.host`/`cred.port`/`cred.user`/`cred.password`/`cred.database`). Use top-level `import` for any npm package you list in `dependencies`. Each method calls the real API with the injected `fetch` and values from `cred`, returning parsed JSON. Example: \"export default (cred, fetch) => ({ async send(arg) { ... use cred.apiKey ... return data; } });\"",
+    ),
+  credential: z
+    .object({
+      kind: z.enum(["oauth"]).optional(),
+      fields: z.array(
+        z.object({
+          name: z
+            .string()
+            .describe("field key the factory reads from `cred`, e.g. 'apiKey'"),
+          label: z.string().describe("human label shown in the form"),
+          type: z.enum(["text", "password", "number"]),
+          placeholder: z.string().optional(),
+          help: z.string().optional(),
+          required: z.boolean().optional(),
+          secret: z.boolean().optional(),
+        }),
+      ),
+    })
+    .describe(
+      "The credential fields this provider needs: one field per secret/config value the client consumes. Either a single secret (e.g. `apiKey` or `connectionString`) or a set of host/port/user/password/database values. Mark secrets type:'password' (and secret:true); mark non-secret config as 'text' or 'number'. The factory reads each value as cred.<name>.",
+    ),
+  dependencies: z
+    .array(z.string())
+    .describe(
+      "npm packages this provider imports (e.g. ['stripe'] or ['@aws-sdk/client-s3@^3']). Empty array if it only uses the injected fetch.",
     ),
   setupGuide: z
     .object({
@@ -60,20 +93,23 @@ export const providerDraftZ = z.object({
 
 const SYSTEM = [
   "You author an external service 'provider' for a workflow automation system.",
-  "A provider is a typed client over a real HTTP API. Funcs call it via ctx.connections.<name>.<method>(...).",
-  "clientSource is a JavaScript function BODY that receives a `token` and returns an object of async methods. Each method calls the real API with fetch and the token (e.g. headers: { Authorization: `Bearer ${token}` }). It must end with 'return { ... }' and have NO function/async wrapper.",
-  "Use only API-key / bearer style auth (a single token). authEnv is the env var name for that token; use empty string only if the API truly needs none.",
-  "egressDomain is the single hostname the client talks to.",
-  "Use your knowledge of the service's real REST API. Keep methods focused on the few most common actions. Each method must be async and return parsed JSON.",
+  "A provider is a typed client over a real service. Funcs call it via ctx.connections.<name>.<method>(...).",
+  "clientSource is an ES module that `export default`s a factory `(cred, fetch) => ({ ...asyncMethods })`. You MAY use top-level `import` for npm client libraries — list every imported package in `dependencies`. Prefer the injected `fetch` for simple HTTP; use a library when it is clearly the right tool.",
+  "The factory receives the credential as `cred`, an object keyed by the field names you declare in `credential.fields`. You MUST co-author `credential.fields` and the clientSource that consumes them: declare one field per secret/config value the client needs. For an HTTP API that is usually a single `apiKey` (used in headers, e.g. Authorization: `Bearer ${cred.apiKey}`). For a database it is a single `connectionString`, or a set of `host`/`port`/`user`/`password`/`database`. Read each value as `cred.<fieldName>`.",
+  "For each credential field: mark secrets type:'password' and secret:true (api keys, passwords, connection strings); mark non-secret config as type:'text' (host, user, database) or type:'number' (port). Give a clear label and required:true for values the client cannot work without.",
+  "If the service is a database, datastore, cache, or message broker — anything with an official client library (Postgres, MySQL, Redis, MongoDB, NATS, etc.) — write a REAL client using that driver over the connection string. Do NOT substitute the vendor's management REST API. The methods should run actual operations (queries, commands). Example for Postgres: declare credential.fields [{ name:'connectionString', label:'Connection string', type:'password', secret:true, required:true }], then: import pg from 'pg'; export default (cred, fetch) => ({ async query(sql, params) { const c = new pg.Client(cred.connectionString); await c.connect(); try { return (await c.query(sql, params)).rows; } finally { await c.end(); } } }); with dependencies: ['pg'].",
+  "authEnv is the env var name holding the primary credential (e.g. NOTION_TOKEN for an API key, DATABASE_URL for a connection string), kept for back-compat; use empty string only if the service truly needs none.",
+  "sandbox.egressDomain is the single host the client talks to — the API hostname, or the database host. The isolated runtime locks all network egress to this single host.",
+  "Use your knowledge of the service's real API or wire protocol. Keep methods focused on the few most common actions. Each method must be async.",
   "Also author a setupGuide: the concrete steps a user follows to get the credential for THIS specific service. Name the exact dashboard/console, the exact settings page (give a real deep link in step.link.href when you know it), which value to copy (the API key / token), and which scopes or permissions to enable. Be specific to the service, not generic. Do not set copyRedirectUrl for API-key providers.",
 ].join("\n");
 
 const REPAIR_SYSTEM = [
   "You repair the clientSource of an external-service provider for a workflow system.",
   "You are given the current provider (its clientSource, apiDoc) and an error from a real API call.",
-  "Fix the clientSource so the call succeeds. Keep the SAME id, name, authEnv, egressDomain, and the SAME method names — only fix the implementation.",
+  "Fix the clientSource so the call succeeds. Keep the SAME id, name, authEnv, sandbox, credential.fields, and the SAME method names — only fix the implementation.",
   "Common fixes: request body encoding (e.g. Stripe wants application/x-www-form-urlencoded, with arrays as key[]=value, or use automatic_payment_methods[enabled]=true), headers, field names, endpoints, response parsing.",
-  "clientSource is a JS function BODY that receives `token` and `fetch`, returns an object of async methods, ends with 'return { ... }', no wrapper.",
+  "clientSource is an ES module that `export default`s a factory `(cred, fetch) => ({ ...asyncMethods })`, where `cred` is keyed by credential.fields names (e.g. cred.apiKey, cred.connectionString). Keep dependencies in sync with any top-level imports.",
 ].join("\n");
 
 const providerRepairZ = providerDraftZ.extend({
@@ -97,7 +133,7 @@ export async function repairProvider(
     prompt: [
       `Provider id: ${draft.id}`,
       `Service: ${draft.name}`,
-      `egressDomain: ${draft.egressDomain}`,
+      `egressDomain: ${draft.sandbox?.egressDomain ?? ""}`,
       `apiDoc: ${draft.apiDoc}`,
       `Current clientSource:\n${draft.clientSource}`,
       `Error from a real call: ${error}`,
@@ -107,14 +143,20 @@ export async function repairProvider(
       sampleInput
         ? `The failing step's resolved input values were: ${sampleInput}`
         : "",
-      "Return the full provider with a fixed clientSource (keep id, name, keywords, authEnv, egressDomain and method names), plus a changeNote.",
+      "Return the full provider with a fixed clientSource (keep id, name, keywords, authEnv, sandbox and method names), plus a changeNote.",
     ]
       .filter(Boolean)
       .join("\n\n"),
   });
   const { changeNote, ...rest } = output;
   return {
-    draft: { ...rest, id: draft.id, setupGuide: rest.setupGuide ?? draft.setupGuide },
+    draft: {
+      ...rest,
+      id: draft.id,
+      setupGuide: rest.setupGuide ?? draft.setupGuide,
+      credential: rest.credential ?? draft.credential,
+      sandbox: rest.sandbox ?? draft.sandbox,
+    },
     changeNote,
   };
 }

@@ -62,6 +62,7 @@ function funcToWire(func: FuncDefinition, title: string, summary: string) {
     })),
     outputSchema: func.outputSchema,
     bodySource: func.body.source,
+    dependencies: func.body.dependencies ?? [],
     requires: func.pure ? [] : func.requires,
     dangerClass: func.pure ? null : func.effect.dangerClass,
     idempotency: func.pure ? null : func.effect.idempotency,
@@ -190,7 +191,7 @@ function makeTools(
         name: draft.name,
         apiDoc: draft.apiDoc,
         authEnv: draft.authEnv,
-        egressDomain: draft.egressDomain,
+        egressDomain: draft.sandbox?.egressDomain,
       };
     },
   }),
@@ -561,17 +562,19 @@ app.get("/api/connections", async (c) => {
 app.post("/api/connections", async (c) => {
   const body = await c.req.json<{
     provider?: string;
-    key?: string;
+    cred?: Record<string, string>;
     account?: string;
   }>();
-  if (!body.provider || !body.key) {
-    return c.json({ error: "provider and key required" }, 400);
+  const cred = body.cred ?? {};
+  const hasValue = Object.values(cred).some((v) => String(v ?? "").trim());
+  if (!body.provider || !hasValue) {
+    return c.json({ error: "provider and cred required" }, 400);
   }
   return c.json(
     await connections.createApiKeyConnection(
       c.get("spaceId"),
       body.provider,
-      body.key,
+      cred,
       body.account,
     ),
   );
