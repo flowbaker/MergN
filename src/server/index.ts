@@ -44,6 +44,7 @@ const SYSTEM = [
   "When the user reports a failed step, FIRST diagnose whether it is a provider bug or a workflow/flow problem — do not jump to repairing the provider:",
   "- Look at the step's resolved input. If it is empty ({}) or missing the field the error is about (e.g. the error says 'amount required' and the resolved input has no amount), then the step is NOT receiving its data. That is a FLOW problem — a missing input declaration on the func, or a missing wire / missing trigger value — NOT the provider. In that case do NOT call repair_provider. Tell the user clearly that the problem is in the flow, point at the missing input, and suggest the fix (declare the input on the step, or wire it / add it to the trigger input).",
   "- Only if the resolved input clearly contains the data but the provider still rejects it, call repair_provider (with provider id, error, call site, sample input) and say what you fixed.",
+  "CONNECTIONS (credentials/secrets) are separate from providers: a provider is the code that calls a service, a connection is the user's stored credential for it. To answer whether the user has a credential for a service (e.g. 'do I have Slack connected?'), call list_connections — it returns metadata only, never the secret value. When the user wants to connect a service, or a workflow needs a provider that has no connection yet, call request_connection with the provider id to open the secure setup dialog where the user enters the secret themselves. NEVER ask the user to type or paste an API key, token, password, or any secret into the chat — you must not handle secret values; always route them through request_connection.",
   "Keep replies short. After building, briefly summarize the steps and how they connect.",
 ].join("\n");
 
@@ -311,6 +312,32 @@ function makeTools(
       fromOutput: outputField ?? "",
       toInput: inputName ?? "",
     }),
+  }),
+  list_connections: tool({
+    description:
+      "List the provider connections (credentials) the user has set up in this space. Returns metadata only — provider, account label, and when it was connected. It NEVER returns the secret value itself. Use this to answer questions like 'do I have a connection for X', or to check before telling the user whether a step can run.",
+    inputSchema: z.object({}),
+    execute: async () =>
+      (await connections.listConnections(spaceId)).map((cn) => ({
+        provider: cn.provider,
+        account: cn.account,
+        connectedAt: cn.createdAt,
+      })),
+  }),
+  request_connection: tool({
+    description:
+      "Open the secure connection setup dialog for a provider so the user can enter their own credentials. Use this when the user wants to connect a service, or when a workflow needs a provider that has no connection yet. NEVER ask the user to paste an API key, token, password, or any secret into the chat — always use this tool so the secret is entered in the secure dialog and stored encrypted; you never see it. Pass the provider id (e.g. 'slack', 'stripe').",
+    inputSchema: z.object({
+      provider: z
+        .string()
+        .describe("the provider id to connect, e.g. 'slack' or 'stripe'"),
+    }),
+    execute: async ({ provider }) => {
+      const existing = (await connections.listConnections(spaceId)).find(
+        (cn) => cn.provider === provider,
+      );
+      return { provider, alreadyConnected: Boolean(existing) };
+    },
   }),
   };
 }

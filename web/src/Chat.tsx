@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import { spaceHeaders } from "./space";
 import { useAuth } from "./authContext";
+import { useConnections } from "./queries";
+import { ConnectionDialog } from "./ConnectionDialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -47,6 +49,8 @@ const TOOL_VERB: Record<string, string> = {
   create_provider: "Creating provider",
   search_providers: "Searching providers",
   repair_provider: "Repairing provider",
+  list_connections: "Checking connections",
+  request_connection: "Opening connection setup",
 };
 
 function fmtElapsed(ms: number): string {
@@ -177,7 +181,10 @@ export function Chat({
 }) {
   const { messages, sendMessage, status } = useChat();
   const { requireAuth } = useAuth();
+  const { data: conns = [] } = useConnections();
   const [input, setInput] = useState("");
+  const [connectProvider, setConnectProvider] = useState<string | null>(null);
+  const handledConnects = useRef<Set<string>>(new Set());
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const grow = () => {
@@ -297,6 +304,22 @@ export function Chat({
   useEffect(() => {
     onOps(ops);
   }, [ops, onOps]);
+
+  useEffect(() => {
+    let target: string | null = null;
+    messages.forEach((m) => {
+      (m.parts as ToolPart[]).forEach((part, i) => {
+        if (part.type !== "tool-request_connection") return;
+        if (part.state !== "output-available") return;
+        const key = `${m.id}:${i}`;
+        if (handledConnects.current.has(key)) return;
+        handledConnects.current.add(key);
+        const o = part.output as { provider?: string } | undefined;
+        if (o?.provider) target = o.provider;
+      });
+    });
+    if (target) setConnectProvider(target);
+  }, [messages]);
 
   useEffect(() => {
     onBuilding?.(building);
@@ -502,6 +525,14 @@ export function Chat({
           </Button>
         </div>
       </form>
+
+      {connectProvider && (
+        <ConnectionDialog
+          provider={connectProvider}
+          connection={conns.find((c) => c.provider === connectProvider)}
+          onClose={() => setConnectProvider(null)}
+        />
+      )}
     </div>
   );
 }
