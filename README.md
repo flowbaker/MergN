@@ -45,7 +45,7 @@ mergn run        # start it
 Then `mergn update` (from any directory) to upgrade later. Prefer doing it by
 hand? Use the Docker or Native setup below.
 
-## Setup and Start with Docker (Recommended)
+## Setup and Start with Docker
 
 Clone, run — Mongo, NATS and the Docker step-runner are all wired into compose
 
@@ -68,7 +68,7 @@ npm install
 cd web && npm install && cd ..
 ```
 
-#### Start
+#### Start Native
 ```bash
 mergn run        # backend (:8787) + web (:5173) together — Ctrl+C to stop
 ```
