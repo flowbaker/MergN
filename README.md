@@ -17,12 +17,12 @@ docker compose logs -f app
 ```
 ## Setup Native
 
+#### Setup
 ```bash
 git clone https://github.com/flowbaker/mergN.git && cd mergN
 npm install
 ```
-### Start Native
-
+#### Start
 ```bash
 npm run server          # backend (loads .env) — http://localhost:8787
 cd web && npm run dev   # frontend (Vite) — http://localhost:5173
