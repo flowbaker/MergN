@@ -1,4 +1,4 @@
-## Quick start (we only support docker rn)
+## Setup and Start with Docker (Recommended)
 
 Clone, run — Mongo, NATS and the Docker step-runner are all wired into compose
 (secrets live in Mongo, no extra storage service). It boots with **no config**
@@ -15,12 +15,26 @@ Follow just the app's logs (without the Mongo/infra noise) when you want them:
 ```bash
 docker compose logs -f app
 ```
-
-To use the AI you need a model. **Easiest:** open the app, sign up, and use the
-**gear icon → AI model** to pick a provider + key — stored in the DB, **no `.env`
-needed**. Or set it via env (add **one** to a `.env`, `cp .env.example .env`):
+## Setup Native
 
 ```bash
+git clone https://github.com/flowbaker/mergN.git && cd mergN
+npm install
+```
+### Start Native
+
+```bash
+npm run server          # backend (loads .env) — http://localhost:8787
+cd web && npm run dev   # frontend (Vite) — http://localhost:5173
+```
+
+## How To Setup Other Stuff
+
+To use the AI you need a model. *Easiest:* open the app, and use the
+*gear icon → AI model* to pick a provider + key — stored in the DB, **no .env
+needed*. Or set it via env (add **one* to a .env, cp .env.example .env):
+
+bash
 GOOGLE_GENERATIVE_AI_API_KEY=...                       # default (Gemini)
 # — or —
 LLM_PROVIDER=openai
@@ -29,31 +43,9 @@ LLM_API_KEY=sk-...
 LLM_PROVIDER=local
 LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_MODEL=llama3.1
-```
 
 Workflow steps run in throwaway Docker containers on your host — no extra setup.
-For real use (not just local), set your own `BETTER_AUTH_SECRET` in `.env`.
-
-## Setup
-
-```bash
-npm install
-```
-
-## Usage
-
-```bash
-npm run server          # backend (loads .env) — http://localhost:8787
-cd web && npm run dev   # frontend (Vite) — http://localhost:5173
-```
-
-## Deployment (Docker)
-
-A single image serves the backend + built web on one port (8787).
-
-```bash
-docker compose up --build   # app + mongo + nats → http://localhost:8787
-```
+For real use (not just local), set your own BETTER_AUTH_SECRET in .env.
 
 The stack is self-contained: workflow state AND secrets live in MongoDB
 (`DocStore` + `doc` vault), and the app is stateless — if the server changes,
