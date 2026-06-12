@@ -89,8 +89,7 @@ Open the app, sign up (local email/password), then click the **gear icon → AI
 model** and choose a provider + key — Google (Gemini), OpenAI, Anthropic, or a
 local Ollama model. It's stored in the app, so **no `.env` needed**.
 
-Now describe what you want in the chat and MergN builds the workflow. (Prefer
-configuring the model via `.env`? See *Troubleshooting & Advanced* below.)
+Now describe what you want in the chat and MergN builds the workflow.
 
 ## Updating
 
@@ -107,19 +106,6 @@ By hand instead — **Docker:** `git pull && docker compose up -d` · **Native:*
 
 ## Troubleshooting & Advanced Setup
 
-Prefer setting the AI model via `.env` instead of the in-app gear? Add **one** of:
-
-```bash
-GOOGLE_GENERATIVE_AI_API_KEY=...                      # default (Gemini)
-# — or —
-LLM_PROVIDER=openai
-LLM_API_KEY=sk-...
-# — or a fully local model (run Ollama on the host) —
-LLM_PROVIDER=local
-LLM_BASE_URL=http://host.docker.internal:11434/v1
-LLM_MODEL=llama3.1
-```
-
 Workflow steps run in throwaway Docker containers on your host — no extra setup.
 For real use (not just local), set your own BETTER_AUTH_SECRET in .env.
 
@@ -133,23 +119,6 @@ Storage is selected via env (see `.env.example`):
 |-----|---------|---------------|
 | `STORE_DRIVER` | `mongo` | `file` |
 | `VAULT_DRIVER` | `doc` (secrets in Mongo) | `s3` (+ `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`, `S3_FORCE_PATH_STYLE`, AWS creds — point at R2/S3 or add a MinIO service) |
-
-### AI model (LLM)
-
-The agent + chat model provider is selected via env. If `LLM_PROVIDER` is empty,
-**google** is used (our managed deploy keeps working this way). Self-hosters can
-use their own model:
-
-| Mode | env |
-|-----|-----|
-| Local model | `LLM_PROVIDER=local` · `LLM_BASE_URL=http://host:11434/v1` · `LLM_MODEL=llama3.1` (Ollama/LM Studio/vLLM) |
-| OpenAI | `LLM_PROVIDER=openai` · `LLM_API_KEY=sk-…` · `LLM_MODEL=gpt-4o` |
-| Anthropic | `LLM_PROVIDER=anthropic` · `LLM_API_KEY=…` · `LLM_MODEL=claude-3-5-sonnet-latest` |
-| Google (own key) | `LLM_PROVIDER=google` · `GOOGLE_GENERATIVE_AI_API_KEY=…` |
-
-> The agents produce structured output (JSON schema) — for a local model a
-> capable one (Llama 3.1 70B / Qwen 32B+) is recommended; small models may
-> break the schema.
 
 ### Code execution (workflow steps)
 
