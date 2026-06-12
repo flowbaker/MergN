@@ -18,9 +18,9 @@ This allows workflows to adapt to a much broader range of use cases without requ
 
 You can already build automations with AI-assisted coding tools. The challenge is visibility.
 
-Most AI-generated automation solutions produce code, but they do not provide a clear way to monitor, inspect, log, and understand what is happening inside a workflow—especially for non-technical users.
+Most AI-generated automation solutions produce code, but they do not provide a clear way to monitor, inspect, log, and understand what is happening inside a workflow. Especially for non-technical users.
 
-Mergn combines the flexibility of AI-generated logic with the observability of traditional workflow platforms. Every workflow remains structured, traceable, and monitorable.
+MergN combines the flexibility of AI-generated logic with the observability of traditional workflow platforms. Every workflow remains structured, traceable, and monitorable.
 
 ### Who Is It For?
 
@@ -32,8 +32,6 @@ Developers get the power of AI-generated workflow logic combined with a visual i
 ## Setup and Start with Docker (Recommended)
 
 Clone, run — Mongo, NATS and the Docker step-runner are all wired into compose
-(secrets live in Mongo, no extra storage service). It boots with **no config**
-(email/password auth, a dev secret):
 
 ```bash
 git clone https://github.com/flowbaker/mergN.git && cd mergN
