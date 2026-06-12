@@ -1,6 +1,4 @@
-# workflow
-
-## Quick start (self-host)
+## Quick start (we only support docker rn)
 
 Clone, run — Mongo, NATS and the Docker step-runner are all wired into compose
 (secrets live in Mongo, no extra storage service). It boots with **no config**
