@@ -45,7 +45,7 @@ Open http://localhost:8787. Logs: docker compose logs -f app · Stop: docker com
 
 That's it. The application is now running with Docker.
 
-**Update (Anytime)**
+**Update**
 
 When you want to update to the latest version, run:
 ```bash
