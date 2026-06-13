@@ -96,14 +96,20 @@ https://www.mongodb.com/docs/manual/installation/
 **Start Native (in separated two terminals):**
 
 ```bash
+cd ~/MergN 
 npm run server          # backend  -> http://localhost:8787
 ```
 ```bash
+cd ~/MergN 
 cd web && npm run dev   # frontend -> http://localhost:5173
 ```
 
-
-**Update:** `git pull && npm install && (cd web && npm install)`, then restart.
+**Update Native:** 
+```bash
+cd ~/MergN 
+git pull && npm install && (cd web && npm install)
+```
+then restart.
 
 (Disable the boot check with `UPDATE_CHECK=0`.)
 
