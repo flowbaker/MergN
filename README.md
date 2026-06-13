@@ -59,11 +59,19 @@ cd web && npm install && cd ..
 **NATS is required** (JetStream — runs scheduled & poll workflows). Start it and
 point the app at it, otherwise the backend exits on startup:
 
+**Install Nats Via Docker** 
+
 ```bash
 docker run -d --name mergn-nats -p 4222:4222 nats:2.14-alpine -js
 cp .env.example .env
 # in .env:  NATS_URL=nats://localhost:4222
 ```
+
+**OR** 
+
+Go to official nats documentation if you want to install another way. 
+
+https://docs.nats.io/running-a-nats-service/introduction/installation
 
 Storage defaults to local files. Optional — use Mongo instead:
 
