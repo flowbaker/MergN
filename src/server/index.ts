@@ -58,6 +58,10 @@ import { createBlobStore } from "../store/blobs";
 import { createBilling } from "./billing";
 import { createUsageStore } from "./usage";
 import { getPlan } from "./plans";
+import {
+  createWebhookAuthStore,
+  type WebhookAuthType,
+} from "./webhook-auth";
 import { checkForUpdates } from "./update-check";
 import { connectNats, initSchedulerStream, type NatsCtx } from "./nats";
 import { createScheduler, missingRequiredParams, type Scheduler } from "./scheduler";
@@ -224,10 +228,12 @@ const usage = createUsageStore(store);
 const billing = createBilling(store, {
   onRenewal: (spaceId) => usage.reset(spaceId),
 });
+const webhookAuth = createWebhookAuthStore(store, vault);
 
 const rateLimiter = createMemoryRateLimiter();
 const CHAT_USER_LIMIT: RateLimitRule = { limit: 20, windowMs: 60_000 };
 const CHAT_GLOBAL_LIMIT: RateLimitRule = { limit: 120, windowMs: 60_000 };
+const HOOK_LIMIT: RateLimitRule = { limit: 60, windowMs: 60_000 };
 
 async function runSavedWorkflow(
   spaceId: string,
@@ -1182,16 +1188,61 @@ app.post("/api/hooks/:spaceId/:workflowId", async (c) => {
   } catch {
     return c.json({ error: "invalid space id" }, 400);
   }
+  const workflowId = c.req.param("workflowId");
+
+  const rl = await rateLimiter.take(`hook:${spaceId}:${workflowId}`, HOOK_LIMIT);
+  if (!rl.ok)
+    return c.json({ error: "rate_limited" }, 429, {
+      "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)),
+    });
+
   await registry.ensureSpace(spaceId);
-  const wf = await workflows.getWorkflow(spaceId, c.req.param("workflowId"));
+  const wf = await workflows.getWorkflow(spaceId, workflowId);
   if (!wf) return c.json({ error: "workflow not found" }, 404);
   if (wf.trigger?.kind !== "webhook")
     return c.json({ error: "workflow has no webhook trigger" }, 400);
-  const body = await c.req
-    .json<Record<string, unknown>>()
-    .catch(() => ({}) as Record<string, unknown>);
-  const run = await runSavedWorkflow(spaceId, wf, body ?? {}, "webhook");
+
+  const rawBody = await c.req.text();
+  const headers = Object.fromEntries(c.req.raw.headers.entries()); // keys lowercased
+  if (!(await webhookAuth.verify(spaceId, workflowId, headers, rawBody)))
+    return c.json({ error: "unauthorized" }, 401);
+
+  // auth-only probe used by the "Test" button — verifies without running
+  if (c.req.header("x-webhook-test")) return c.json({ ok: true, test: true });
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+  } catch {
+    body = {};
+  }
+  const run = await runSavedWorkflow(spaceId, wf, body, "webhook");
   return c.json({ ok: true, runId: run.id, status: run.status });
+});
+
+// --- Webhook auth config (per workflow) ---
+app.get("/api/workflows/:id/webhook-auth", async (c) => {
+  return c.json(
+    await webhookAuth.getPublic(c.get("spaceId"), c.req.param("id")),
+  );
+});
+
+app.post("/api/workflows/:id/webhook-auth", async (c) => {
+  const body = await c.req.json<{
+    type: WebhookAuthType;
+    header?: string;
+    secret?: string;
+  }>();
+  await webhookAuth.set(c.get("spaceId"), c.req.param("id"), {
+    type: body.type,
+    header: body.header,
+    secret: body.secret,
+  });
+  return c.json({ ok: true });
+});
+
+app.post("/api/workflows/:id/webhook-auth/test", async (c) => {
+  return c.json({ ok: await webhookAuth.selfTest(c.get("spaceId"), c.req.param("id")) });
 });
 
 // On-demand "Fix with AI": runs the same deterministic-detect + LLM-bridge

@@ -77,6 +77,33 @@ export function resumeWorkflow(id: string): Promise<{ ok: boolean }> {
   return json(`/api/workflows/${id}/resume`, { method: "POST" });
 }
 
+export type WebhookAuthType = "none" | "hmac" | "basic" | "bearer" | "jwt";
+
+export function getWebhookAuth(
+  workflowId: string,
+): Promise<{ type: WebhookAuthType; header?: string }> {
+  return json(`/api/workflows/${workflowId}/webhook-auth`);
+}
+
+export function setWebhookAuth(
+  workflowId: string,
+  body: { type: WebhookAuthType; header?: string; secret?: string },
+): Promise<{ ok: boolean }> {
+  return json(`/api/workflows/${workflowId}/webhook-auth`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function testWebhookAuth(
+  workflowId: string,
+): Promise<{ ok: boolean }> {
+  return json(`/api/workflows/${workflowId}/webhook-auth/test`, {
+    method: "POST",
+  });
+}
+
 export function useWorkflows() {
   const { user } = useAuth();
   return useQuery({

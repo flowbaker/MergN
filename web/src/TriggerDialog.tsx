@@ -20,6 +20,7 @@ import type {
   PollTriggerConfig,
 } from "./types";
 import { getSpace } from "./space";
+import { WebhookSecurity } from "./WebhookSecurity";
 
 const KINDS: {
   kind: TriggerKind;
@@ -357,6 +358,7 @@ export function TriggerDialog({
                 </p>
                 <CopyChip value={webhookUrl} />
                 <CopyChip value={`curl -X POST ${webhookUrl} -d '{}'`} />
+                {workflowId && <WebhookSecurity workflowId={workflowId} />}
               </>
             ) : (
               <p className="text-xs leading-relaxed text-amber-300/90">
