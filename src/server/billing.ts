@@ -64,7 +64,16 @@ export interface BillingService {
   planOf(spaceId: string): Promise<Plan>;
 }
 
-export function createBilling(store: DocStore): BillingService {
+export interface BillingDeps {
+  // Called when a subscription's billing cycle renews (invoice paid) so usage
+  // counters can be reset on the billing day rather than the calendar month.
+  onRenewal?: (spaceId: string) => Promise<void>;
+}
+
+export function createBilling(
+  store: DocStore,
+  deps: BillingDeps = {},
+): BillingService {
   const key = process.env.STRIPE_SECRET_KEY;
   const stripe = key ? new Stripe(key) : null;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -248,6 +257,29 @@ export function createBilling(store: DocStore): BillingService {
             if (rec) {
               rec.subscriptionStatus = "past_due";
               await save(rec);
+            }
+          }
+          break;
+        }
+        case "invoice.paid":
+        case "invoice.payment_succeeded": {
+          const inv = event.data.object as Stripe.Invoice;
+          const customerId =
+            typeof inv.customer === "string" ? inv.customer : inv.customer?.id;
+          if (customerId) {
+            const rec = await findByCustomer(customerId);
+            if (rec) {
+              rec.subscriptionStatus = "active";
+              await save(rec);
+              // Reset usage when the period rolls over (renewal). New subs and
+              // upgrades start fresh too — billing_reason covers all three.
+              if (
+                deps.onRenewal &&
+                (inv.billing_reason === "subscription_cycle" ||
+                  inv.billing_reason === "subscription_create" ||
+                  inv.billing_reason === "subscription_update")
+              )
+                await deps.onRenewal(rec.spaceId);
             }
           }
           break;

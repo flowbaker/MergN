@@ -36,6 +36,29 @@ export function useSubscription(spaceId: string) {
   });
 }
 
+export interface Invoice {
+  id: string;
+  number: string | null;
+  status: string | null;
+  amount: number; // cents
+  currency: string;
+  period_start: number;
+  period_end: number;
+  paid_at: number | null;
+  invoice_pdf: string | null;
+  hosted_url: string | null;
+}
+
+export function useInvoices(spaceId: string) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["invoices", spaceId],
+    queryFn: () => api<Invoice[]>(`/api/spaces/${spaceId}/billing/invoices`),
+    enabled: !!user && !!spaceId,
+    staleTime: 60_000,
+  });
+}
+
 // Opens the Stripe customer portal (manage / change / cancel plan).
 export async function openBillingPortal(spaceId: string): Promise<void> {
   const { portal_url } = await api<{ portal_url: string }>(

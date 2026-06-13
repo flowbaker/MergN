@@ -220,8 +220,10 @@ const membership = createMembership(store);
 const chats = createChatStore(store);
 const userLogs = createLogStore(store);
 const fileService = createFileService(store, createBlobStore());
-const billing = createBilling(store);
 const usage = createUsageStore(store);
+const billing = createBilling(store, {
+  onRenewal: (spaceId) => usage.reset(spaceId),
+});
 
 const rateLimiter = createMemoryRateLimiter();
 const CHAT_USER_LIMIT: RateLimitRule = { limit: 20, windowMs: 60_000 };

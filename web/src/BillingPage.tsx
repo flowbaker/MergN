@@ -1,9 +1,108 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Loader2, CreditCard, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  CreditCard,
+  Sparkles,
+  Download,
+  ExternalLink,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSubscription, openBillingPortal } from "./billing";
+import {
+  useSubscription,
+  useInvoices,
+  openBillingPortal,
+  type Invoice,
+} from "./billing";
 import { EnterpriseDialog } from "./EnterpriseDialog";
+
+function fmtAmount(cents: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: currency.toUpperCase(),
+    }).format(cents / 100);
+  } catch {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+}
+
+function fmtTs(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+const INV_STATUS: Record<string, string> = {
+  paid: "text-emerald-500",
+  open: "text-amber-500",
+  uncollectible: "text-rose-500",
+};
+
+function InvoicesSection({ spaceId }: { spaceId: string }) {
+  const { data, isLoading } = useInvoices(spaceId);
+  const invoices = (data ?? []).filter(
+    (i) => i.status !== "draft" && i.status !== "void",
+  );
+  if (isLoading || invoices.length === 0) return null;
+
+  return (
+    <div className="mt-6">
+      <h2 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Invoices
+      </h2>
+      <div className="divide-y divide-border/40 overflow-hidden rounded-2xl border border-border/50 bg-card">
+        {invoices.map((inv: Invoice) => {
+          const unpaid = inv.status === "open" || inv.status === "uncollectible";
+          return (
+            <div key={inv.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">
+                  {fmtAmount(inv.amount, inv.currency)}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {inv.number ?? inv.id} ·{" "}
+                  {fmtTs(inv.paid_at || inv.period_start)}
+                </div>
+              </div>
+              <span
+                className={cn(
+                  "text-xs font-medium capitalize",
+                  INV_STATUS[inv.status ?? ""] ?? "text-muted-foreground",
+                )}
+              >
+                {inv.status}
+              </span>
+              {unpaid && inv.hosted_url ? (
+                <a
+                  href={inv.hosted_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-500 hover:bg-amber-500/25"
+                >
+                  Pay <ExternalLink className="size-3" />
+                </a>
+              ) : inv.invoice_pdf ? (
+                <a
+                  href={inv.invoice_pdf}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Download invoice"
+                  className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Download className="size-4" />
+                </a>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
@@ -172,6 +271,8 @@ export function BillingPage() {
             </div>
           </div>
         )}
+
+        {sub && spaceId && <InvoicesSection spaceId={spaceId} />}
 
         <button
           onClick={() => setEnterprise(true)}
