@@ -647,9 +647,10 @@ export function App({
           inputs,
         );
       });
+      const triggerOut = [...new Set([...triggerFields, ...variableFields])];
       if (
         trigger.kind === "manual" ||
-        (funcs.length === 0 && triggerFields.length === 0)
+        (funcs.length === 0 && triggerOut.length === 0)
       )
         return funcNodes;
       const triggerNode: Node = {
@@ -659,7 +660,7 @@ export function App({
           prevPos.get("trigger") ??
           positionsRef.current["trigger"] ?? { x: 40, y: 160 },
         data: {
-          fields: triggerFields,
+          fields: triggerOut,
           kind: trigger.kind,
           activation,
           busy: actBusy,
@@ -693,6 +694,7 @@ export function App({
     runStatus,
     connectedProviders,
     triggerFields,
+    variableFields,
     trigger,
     activation,
     actBusy,
@@ -705,8 +707,9 @@ export function App({
 
   const rfEdges: Edge[] = useMemo(() => {
     const ids = new Set(funcs.map((f) => f.id));
-    if (trigger.kind !== "manual") ids.add("trigger");
-    return wires
+    const showTrigger = trigger.kind !== "manual";
+    if (showTrigger) ids.add("trigger");
+    const wireEdges: Edge[] = wires
       .filter((w) => ids.has(w.from) && ids.has(w.to))
       .map((w) => ({
         id: wireKey(w),
@@ -717,6 +720,27 @@ export function App({
         animated: true,
         style: { stroke: "#6ea8ff" },
       }));
+    // Trigger-fed inputs are implicit bindings (not wires) — draw them as edges
+    // from the trigger node so a webhook/schedule visibly connects to its steps.
+    const triggerEdges: Edge[] = [];
+    if (showTrigger) {
+      for (const f of funcs) {
+        for (const p of f.inputs) {
+          if (p.role === "config") continue;
+          if (wires.some((w) => w.to === f.id && w.toInput === p.name)) continue;
+          triggerEdges.push({
+            id: `trigger.${p.name}->${f.id}.${p.name}`,
+            source: "trigger",
+            target: f.id,
+            sourceHandle: p.name,
+            targetHandle: p.name,
+            animated: true,
+            style: { stroke: "#6ea8ff" },
+          });
+        }
+      }
+    }
+    return [...wireEdges, ...triggerEdges];
   }, [wires, funcs, trigger.kind]);
 
   const reset = () => {
