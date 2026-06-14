@@ -72,7 +72,7 @@ import { createScheduleStore, type ScheduleStore } from "../store/schedules";
 import { createPollRunner } from "./poll-runner";
 import { resolveEgressHost } from "./egress";
 import { createOAuth } from "./oauth";
-import { auth, getSessionUser } from "./auth";
+import { auth, getSessionUser, emailVerificationRequired } from "./auth";
 import { createMembership } from "./membership";
 import type { FuncDefinition, StepRecord } from "../atoms/index";
 
@@ -833,13 +833,19 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 // Self-host single-user mode: skip auth entirely and act as one local user.
 const DISABLE_AUTH =
   process.env.DISABLE_AUTH === "1" || process.env.DISABLE_AUTH === "true";
-const LOCAL_USER = { id: "local", email: "local@localhost", name: "Local" };
+const LOCAL_USER = {
+  id: "local",
+  email: "local@localhost",
+  name: "Local",
+  emailVerified: true,
+};
 
 app.get("/api/config", (c) =>
   c.json({
     authDisabled: DISABLE_AUTH,
     managed: MANAGED,
     maxSpaces: LIMITS.maxSpacesPerUser,
+    requireEmailVerification: emailVerificationRequired,
   }),
 );
 
@@ -857,6 +863,11 @@ app.use("/api/*", async (c, next) => {
     ? LOCAL_USER
     : await getSessionUser(c.req.raw.headers);
   if (!user) return c.json({ error: "unauthorized" }, 401);
+
+  // Gate unverified users out of the app API (the verify flow itself runs under
+  // /api/auth/, already excluded above). Frontend shows the verification screen.
+  if (emailVerificationRequired && !user.emailVerified)
+    return c.json({ error: "email_not_verified" }, 403);
 
   const personal = await membership.ensurePersonalSpace(user);
   let spaceId = personal.id;

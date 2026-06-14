@@ -14,11 +14,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useSession, signOut } from "./auth";
 import { AuthForm } from "./AuthForm";
+import { EmailVerify } from "./EmailVerify";
 
 export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  emailVerified?: boolean;
 }
 
 interface AuthContextValue {
@@ -71,6 +73,7 @@ const LOCAL_USER: AuthUser = {
   id: "local",
   email: "local@localhost",
   name: "Local",
+  emailVerified: true,
 };
 
 function ApiUnreachable({ onRetry }: { onRetry: () => void }) {
@@ -95,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
   const [managed, setManaged] = useState<boolean | null>(null);
   const [maxSpaces, setMaxSpaces] = useState<number | null>(null);
+  const [requireVerify, setRequireVerify] = useState(false);
   const [apiUnreachable, setApiUnreachable] = useState(false);
   const [configAttempt, setConfigAttempt] = useState(0);
 
@@ -108,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           authDisabled?: boolean;
           managed?: boolean;
           maxSpaces?: number;
+          requireEmailVerification?: boolean;
         }>;
       })
       .then((c) => {
@@ -115,6 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAuthDisabled(!!c.authDisabled);
         setManaged(!!c.managed);
         setMaxSpaces(typeof c.maxSpaces === "number" ? c.maxSpaces : null);
+        setRequireVerify(!!c.requireEmailVerification);
       })
       .catch(() => {
         if (cancelled) return;
@@ -206,6 +212,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return (
       <ApiUnreachable onRetry={() => setConfigAttempt((n) => n + 1)} />
     );
+  }
+
+  // Signed in but email not verified (and the deployment requires it): gate the
+  // whole app behind the verification screen until they enter the code.
+  if (!pending && !authDisabled && requireVerify && user && !user.emailVerified) {
+    return <EmailVerify email={user.email} />;
   }
 
   return (
