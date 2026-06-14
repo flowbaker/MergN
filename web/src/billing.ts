@@ -26,12 +26,12 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function useSubscription(spaceId: string) {
-  const { user } = useAuth();
+  const { user, managed } = useAuth();
   return useQuery({
     queryKey: ["subscription", spaceId],
     queryFn: () =>
       api<SubscriptionView>(`/api/spaces/${spaceId}/billing/subscription`),
-    enabled: !!user && !!spaceId,
+    enabled: !!user && !!spaceId && managed === true,
     staleTime: 30_000,
   });
 }
@@ -50,11 +50,11 @@ export interface Invoice {
 }
 
 export function useInvoices(spaceId: string) {
-  const { user } = useAuth();
+  const { user, managed } = useAuth();
   return useQuery({
     queryKey: ["invoices", spaceId],
     queryFn: () => api<Invoice[]>(`/api/spaces/${spaceId}/billing/invoices`),
-    enabled: !!user && !!spaceId,
+    enabled: !!user && !!spaceId && managed === true,
     staleTime: 60_000,
   });
 }

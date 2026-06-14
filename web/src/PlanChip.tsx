@@ -1,13 +1,14 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSubscription } from "./billing";
+import { useAuth } from "./authContext";
 import { getSpace } from "./space";
 
-// Small current-plan chip shown next to the space switcher. Click → billing.
 export function PlanChip() {
   const navigate = useNavigate();
+  const { managed } = useAuth();
   const spaceId = getSpace();
   const { data: sub } = useSubscription(spaceId);
-  if (!spaceId || !sub) return null;
+  if (managed !== true || !spaceId || !sub) return null;
 
   return (
     <button

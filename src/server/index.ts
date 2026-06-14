@@ -55,9 +55,9 @@ import { createChatStore } from "./chat";
 import { createLogStore } from "./logs";
 import { createFileService, MAX_FILE_BYTES } from "./files";
 import { createBlobStore } from "../store/blobs";
-import { createBilling } from "./billing";
+import { createBillingStub } from "./billing-stub";
+import type { BillingService } from "./billing-types";
 import { createUsageStore } from "./usage";
-import { getPlan } from "./plans";
 import {
   createWebhookAuthStore,
   type WebhookAuthType,
@@ -199,6 +199,9 @@ function withResultLimits(tools: ToolSet): ToolSet {
   return tools;
 }
 
+const MANAGED =
+  process.env.MANAGED === "1" || process.env.MANAGED === "true";
+
 const { store, vault } = createStorage();
 initUsageCap(store);
 const registry = createRegistry(store);
@@ -225,9 +228,14 @@ const chats = createChatStore(store);
 const userLogs = createLogStore(store);
 const fileService = createFileService(store, createBlobStore());
 const usage = createUsageStore(store);
-const billing = createBilling(store, {
-  onRenewal: (spaceId) => usage.reset(spaceId),
-});
+const billing: BillingService =
+  MANAGED && process.env.STRIPE_SECRET_KEY
+    ? await (
+        await import("./billing-stripe")
+      ).createStripeBilling(store, {
+        onRenewal: (spaceId) => usage.reset(spaceId),
+      })
+    : createBillingStub();
 const webhookAuth = createWebhookAuthStore(store, vault);
 
 const rateLimiter = createMemoryRateLimiter();
@@ -785,8 +793,6 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 // Self-host single-user mode: skip auth entirely and act as one local user.
 const DISABLE_AUTH =
   process.env.DISABLE_AUTH === "1" || process.env.DISABLE_AUTH === "true";
-const MANAGED =
-  process.env.MANAGED === "1" || process.env.MANAGED === "true";
 const LOCAL_USER = { id: "local", email: "local@localhost", name: "Local" };
 
 app.get("/api/config", (c) =>
@@ -799,7 +805,7 @@ app.use("/api/*", async (c, next) => {
     path.startsWith("/api/auth/") ||
     path.startsWith("/api/hooks/") ||
     path === "/api/config" ||
-    path === "/api/billing/webhook"
+    (MANAGED && path === "/api/billing/webhook")
   )
     return next();
 
@@ -904,10 +910,11 @@ app.post("/api/chat", async (c) => {
   // tokens. A new conversation is one with no prior messages. Only enforced when
   // billing (Stripe) is configured — otherwise there's no way to upgrade, so we
   // leave usage uncapped (the global GLOBAL_TOKEN_CAP still applies).
-  const plan = getPlan((await billing.planOf(spaceId)).slug);
+  const plan = await billing.planOf(spaceId);
   const spaceUsage = await usage.get(spaceId);
   const isNewChat = previous.length === 0;
   if (
+    MANAGED &&
     billing.enabled() &&
     plan.limits.chats >= 0 &&
     isNewChat &&
@@ -924,6 +931,7 @@ app.post("/api/chat", async (c) => {
     );
   }
   if (
+    MANAGED &&
     billing.enabled() &&
     plan.limits.aiTokens >= 0 &&
     spaceUsage.aiTokens >= plan.limits.aiTokens
@@ -1508,58 +1516,59 @@ app.post("/api/spaces", async (c) => {
   return c.json({ id: space.id, name: space.name });
 });
 
-// --- Billing (Stripe) ---
-async function assertSpaceOwner(c: Context): Promise<string> {
-  const spaceId = c.req.param("id");
-  if (!spaceId) throw new HTTPException(400, { message: "bad space id" });
-  if (!DISABLE_AUTH && !(await membership.canAccess(c.get("userId"), spaceId)))
-    throw new HTTPException(403, { message: "forbidden" });
-  return spaceId;
-}
+if (MANAGED) {
+  async function assertSpaceOwner(c: Context): Promise<string> {
+    const spaceId = c.req.param("id");
+    if (!spaceId) throw new HTTPException(400, { message: "bad space id" });
+    if (!DISABLE_AUTH && !(await membership.canAccess(c.get("userId"), spaceId)))
+      throw new HTTPException(403, { message: "forbidden" });
+    return spaceId;
+  }
 
-app.get("/api/spaces/:id/billing/subscription", async (c) => {
-  const spaceId = await assertSpaceOwner(c);
-  const sub = await billing.getSubscription(spaceId);
-  const u = await usage.get(spaceId);
-  return c.json({
-    ...sub,
-    usage: { chats: u.chats, ai_tokens: u.aiTokens },
-    billing_enabled: billing.enabled(),
+  app.get("/api/spaces/:id/billing/subscription", async (c) => {
+    const spaceId = await assertSpaceOwner(c);
+    const sub = await billing.getSubscription(spaceId);
+    const u = await usage.get(spaceId);
+    return c.json({
+      ...sub,
+      usage: { chats: u.chats, ai_tokens: u.aiTokens },
+      billing_enabled: billing.enabled(),
+    });
   });
-});
 
-app.post("/api/spaces/:id/billing/portal", async (c) => {
-  const spaceId = await assertSpaceOwner(c);
-  if (!billing.enabled())
-    return c.json({ error: "billing_not_configured" }, 503);
-  try {
-    const returnUrl = `${process.env.APP_URL ?? ""}/s/${spaceId}/billing`;
-    const url = await billing.createPortalSession(spaceId, returnUrl);
-    return c.json({ portal_url: url });
-  } catch (e) {
-    return c.json(
-      { error: e instanceof Error ? e.message : "portal failed" },
-      500,
-    );
-  }
-});
+  app.post("/api/spaces/:id/billing/portal", async (c) => {
+    const spaceId = await assertSpaceOwner(c);
+    if (!billing.enabled())
+      return c.json({ error: "billing_not_configured" }, 503);
+    try {
+      const returnUrl = `${process.env.APP_URL ?? ""}/s/${spaceId}/billing`;
+      const url = await billing.createPortalSession(spaceId, returnUrl);
+      return c.json({ portal_url: url });
+    } catch (e) {
+      return c.json(
+        { error: e instanceof Error ? e.message : "portal failed" },
+        500,
+      );
+    }
+  });
 
-app.get("/api/spaces/:id/billing/invoices", async (c) => {
-  const spaceId = await assertSpaceOwner(c);
-  return c.json(await billing.getInvoices(spaceId));
-});
+  app.get("/api/spaces/:id/billing/invoices", async (c) => {
+    const spaceId = await assertSpaceOwner(c);
+    return c.json(await billing.getInvoices(spaceId));
+  });
 
-app.post("/api/billing/webhook", async (c) => {
-  const sig = c.req.header("stripe-signature") ?? "";
-  const body = await c.req.text();
-  try {
-    await billing.handleWebhook(body, sig);
-    return c.json({ received: true });
-  } catch (e) {
-    console.error("stripe webhook failed", e);
-    return c.json({ error: "webhook failed" }, 400);
-  }
-});
+  app.post("/api/billing/webhook", async (c) => {
+    const sig = c.req.header("stripe-signature") ?? "";
+    const body = await c.req.text();
+    try {
+      await billing.handleWebhook(body, sig);
+      return c.json({ received: true });
+    } catch (e) {
+      console.error("stripe webhook failed", e);
+      return c.json({ error: "webhook failed" }, 400);
+    }
+  });
+}
 
 app.get("/api/connections", async (c) => {
   return c.json(await connections.listConnections(c.get("spaceId")));

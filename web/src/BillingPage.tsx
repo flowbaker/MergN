@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   openBillingPortal,
   type Invoice,
 } from "./billing";
+import { useAuth } from "./authContext";
 import { EnterpriseDialog } from "./EnterpriseDialog";
 
 function fmtAmount(cents: number, currency: string): string {
@@ -127,9 +128,22 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 export function BillingPage() {
   const { spaceId } = useParams({ strict: false }) as { spaceId?: string };
   const navigate = useNavigate();
+  const { managed } = useAuth();
   const { data: sub, isLoading } = useSubscription(spaceId ?? "");
   const [managing, setManaging] = useState(false);
   const [enterprise, setEnterprise] = useState(false);
+
+  useEffect(() => {
+    if (managed === false) {
+      void navigate({
+        to: spaceId ? "/s/$spaceId" : "/",
+        params: spaceId ? { spaceId } : undefined,
+        replace: true,
+      });
+    }
+  }, [managed, navigate, spaceId]);
+
+  if (managed !== true) return null;
 
   const manage = async () => {
     if (!spaceId) return;
